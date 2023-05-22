@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from dataset import SeqDataset
 from dtw import *
 from mlp import MLP
+import matplotlib.pyplot as plt
 
 def build_retrieval_set(curve_funcs, curve_lens, soh, seq_len):
     retrieval_set = []
@@ -76,13 +77,14 @@ def main():
         print("Epoch", epoch)
         # Train
         print("Start training")
+        min_valid_loss = float('inf')
         sum_loss, batch_num = 0, 0
         for _, (seq, target) in enumerate(train_loader):
             loss = 0
             start_soh = seq[:, 0, :]
             self_curve_len = len(train_loader) + seq_len
             for i in range(len(start_soh)):
-                retrieval_set =  build_retrieval_set(curve_funcs, curve_lens, start_soh[i].data.item(), seq_len)
+                retrieval_set = build_retrieval_set(curve_funcs, curve_lens, start_soh[i].data.item(), seq_len)
                 x = seq[i].numpy().reshape(-1)
                 scores = []
                 for retrieval_seq in retrieval_set:
@@ -103,9 +105,9 @@ def main():
                 for n in range(len(indices)):
                     curve_id = indices[n]
                     predict_cycle = root(get_root, x0=0, args=(curve_funcs[curve_id], target_soh.item()))
-                    output_clone[n] *= predict_cycle.x.item() * curve_lens[curve_id] / self_curve_len
+                    output_clone[n] *= predict_cycle.x.item() * curve_lens[curve_id]
                 output = output_clone
-                loss += criterion(output.sum(), target_cycle / self_curve_len)
+                loss += criterion(output.sum() / self_curve_len, target_cycle / self_curve_len)
             
             loss /= args.batch
             loss.backward()
@@ -121,6 +123,7 @@ def main():
         score_model.eval()
         loss = 0
         batch_num = 0
+        predict_list, target_list = [], []
         for step, (seq, target) in enumerate(test_loader):
             start_soh = seq[:, 0, :]
             self_curve_len = len(test_loader) + seq_len
@@ -147,13 +150,25 @@ def main():
                 curve_id = indices[n]
                 predict_cycle = root(get_root, x0=0, args=(curve_funcs[curve_id], target_soh.item()))
                 # print(predict_cycle.x)
-                output_clone[n] *= predict_cycle.x.item() * curve_lens[curve_id] / self_curve_len
+                output_clone[n] *= predict_cycle.x.item() * curve_lens[curve_id]
             if step % 40 == 0:
-                print(output_clone.sum() * self_curve_len, target_cycle)
+                print(output_clone.sum(), target_cycle)
             output = output_clone
-            loss += criterion(output.sum(), target_cycle / self_curve_len)
+            target_list.append((target_cycle.detach().numpy(), target_soh.detach().numpy()))
+            predict_list.append(output_clone.sum().detach().item())
+            loss += criterion(output.sum() / self_curve_len, target_cycle / self_curve_len)
             batch_num += 1
         print("test_average_loss", loss / batch_num)
+        # for i in range(len(target_list)):
+        #     print(target_list[i], predict_list[i])
+        # assert 0
+        if loss / batch_num < min_valid_loss:
+            min_valid_loss = loss / batch_num
+            plt.plot([i for i in range(len(test_data))], test_data)
+            plt.plot([i for i in predict_list], target_list)
+            plt.savefig(f"./figures/epoch{epoch}")
+            plt.close()
+        
 
 if __name__ == "__main__":
     main()
