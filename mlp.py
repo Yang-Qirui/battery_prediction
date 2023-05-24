@@ -10,11 +10,13 @@ class MLP(nn.Module):
             nn.ReLU(),  # 激活函数
             nn.Linear(64, 64),  # 隐藏层
             nn.ReLU(),  # 激活函数
-            nn.Linear(64, out_channel) # 输出层，假设有1个神经元
+            nn.Linear(64, out_channel), # 输出层，假设有1个神经元
+            nn.Softmax(dim=0)
         )
-        self.std_layer = nn.Softmax(dim=0)
+        self.loss_weights = nn.Parameter(torch.ones(2))
 
     def forward(self, x):
         output = self.layers(x)
-        std_output = self.std_layer(output)
-        return std_output
+        # output = self.std_layer(output)
+        # output = nn.ReLU()(output)
+        return output

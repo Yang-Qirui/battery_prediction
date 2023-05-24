@@ -2,7 +2,7 @@ import numpy as np
 from scipy.interpolate import interp1d, UnivariateSpline
 import matplotlib.pyplot as plt
 
-def interpolate(data, scale_rate):
+def interpolate(data, scale_rate=1):
 
     # 原始数据的长度
     original_length = len(data)    
@@ -32,7 +32,7 @@ def interpolate(data, scale_rate):
 def data_aug():
     path = './dataset/train'
     train_data = np.load('/'.join([path, 'soh.npy']))
-    scale_rates = [0.5, 0.6, 0.7, 0.8, 0.9, 1,1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0]
+    scale_rates = [0.8, 0.9, 0.93, 0.96, 0.98, 1.02, 1.05, 1.08, 1.1, 1.2, 1.3]
     curve_list, s_curve_list, curve_func_list, s_curve_func_list, new_length_list, origin_length_list = [], [], [], [], [], []
     for scale_rate in scale_rates:
         curve, smooth_curve, new_length, curve_f, smooth_curve_f, original_length = interpolate(train_data, scale_rate)
