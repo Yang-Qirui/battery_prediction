@@ -14,6 +14,10 @@ from mlp import MLP
 import matplotlib.pyplot as plt
 import os
 
+import wandb
+from torch.utils.data import DataLoader, Dataset, Sampler, TensorDataset
+import dataloader
+
 class NegativeMSELoss(nn.Module):
     def __init__(self):
         super(NegativeMSELoss, self).__init__()
@@ -74,9 +78,122 @@ def build_dataset(raw, seq_len, N):
 def get_root(x, spline, y_target):
     return spline(x) - y_target 
 
+def featuremodel():
+
+    return 
+
+def data_process():
+
+    n_cyc = 30
+    in_stride = 3
+    fea_num = 100
+
+    v_low = 3.36
+    v_upp = 3.60
+    q_low = 610
+    q_upp = 1190
+    rul_factor = 3000.
+    cap_factor = 1190
+    i_low = -2199
+    i_upp = 5498
+    pkl_dir = './our_data/'
+    pkl_list = os.listdir(pkl_dir)
+
+    # new_valid = ['4-3', '5-7', '3-3', '2-3', '9-3', '10-5', '3-2', '3-7']
+    new_train = ['9-1', '2-2', '4-7', '9-7', '1-8', '4-6', '2-7', '8-4', '7-2', '10-3', '2-4', '7-4', '3-4',
+                 '5-4', '8-7', '7-7', '4-4', '1-3', '7-1', '5-2', '6-4', '9-8', '9-5', '6-3', '10-8', '1-6', '3-5',
+                 '2-6', '3-8', '3-6', '4-8', '7-8', '5-1', '2-8', '8-2', '1-5', '7-3', '10-2', '5-5', '9-2', '5-6', '1-7',
+                 '8-3', '4-1', '4-2', '1-4']
+    new_test = ['9-6', '4-5', '1-2', '10-7', '1-1', '6-1', '6-6', '9-4', '10-4', '8-5', '5-3', '10-6',
+                '2-5', '6-2', '3-1', '8-8', '8-1', '8-6', '7-6', '6-8', '7-5', '10-1',
+                '4-3', '5-7', '3-3', '2-3', '9-3', '10-5', '3-2', '3-7', '6-5']
+
+    train_fea, train_ruls, train_batteryids = [], [], []
+    seq_len = 100
+    series_lens = [100]
+
+    batch_size = 32
+    valida_batch_size = 1
+    seriesnum=1500
+    scale_ratios = [1, 2, 3, 4] # [1, 2, 3]  # must in ascent order, e.g. [1, 2, 3]
+    except_ratios = [[1, 2], [2, 1],
+                 [2, 2],
+                 [1, 3], [3, 1], [3, 3],
+                 [1, 4], [2, 4], [4, 1], [4, 2], [4, 4]]
+    parts_num_per_ratio=240
+    valid_max_len = 10
+    # wandb.init(project='battery_rul_predict',
+    #         config={
+    #                 'batch_size': 32,
+    #                 'valida_batch_size': 1,
+    #                 'seriesnum':1500,
+    #                 'scale_ratios' : '[1, 2, 3]', # [1, 2, 3]  # must in ascent order, e.g. [1, 2, 3]
+    #                 'except_ratios' : '[[1, 2], [2, 1], [2, 2], [1, 3], [3, 1], [3, 3], [1, 4], [2, 4], [4, 1], [4, 2], [4, 4]]',
+    #                 'parts_num_per_ratio':240,
+    #                 'valid_max_len': 10
+    #             }
+    #         )
+    train_fea, train_rul, train_ruls, train_batteryids = [], [], [], []
+    batteryid = 0
+    for name in new_train:
+        # tmp_fea, tmp_lbl = dataloader.get_xy(name, n_cyc, in_stride, fea_num, v_low, v_upp, q_low, q_upp, rul_factor, cap_factor)
+        tmp_fea, tmp_lbl = dataloader.get_xyv2(name, series_lens, i_low, i_upp, v_low, v_upp, q_low, q_upp, rul_factor, cap_factor, pkl_dir, raw_features=False, seriesnum=seriesnum)
+        train_fea.append(tmp_fea)
+        train_ruls.append(tmp_lbl)
+        train_batteryids += [batteryid for _ in range(tmp_fea.shape[0])]
+        batteryid += 1
+
+    retrieval_set = {}
+    batteryid = 0
+    for name in new_train:
+        retrieval_set[batteryid] = dataloader.get_retrieval_seq(name, pkl_dir, rul_factor, seriesnum=seriesnum)
+        batteryid += 1
+
+    
+
+    train_fea = np.vstack(train_fea)
+    train_ruls = np.vstack(train_ruls)
+    train_rul = train_ruls[:,0]
+    # import pdb;pdb.set_trace()
+    train_batteryids = np.array(train_batteryids)
+    train_batteryids = train_batteryids.reshape((-1, 1))
+    # train_lbl = np.hstack((train_rul, train_batteryids))
+
+    valid_fea, valid_rul, valid_ruls, valid_batteryids = [], [], [], []
+    valid_battery_id = 0
+
+    for name in new_test:
+        tmp_fea, tmp_lbl = dataloader.get_xyv2(name, series_lens, i_low, i_upp, v_low, v_upp, q_low, q_upp, rul_factor, cap_factor, pkl_dir, raw_features=False)
+        valid_fea.append(tmp_fea[:valid_max_len])#[::stride])
+        valid_ruls.append(tmp_lbl[:valid_max_len])#[::stride])strid
+        valid_batteryids += [valid_battery_id for i in range(len(tmp_fea))][:valid_max_len]#[::e]))]
+        valid_battery_id += 1
+    valid_fea = np.vstack(valid_fea)
+    valid_ruls = np.vstack(valid_ruls)#.squeeze()
+    valid_rul = valid_ruls[:,0]
+    valid_batteryids = np.array(valid_batteryids)
+    valid_batteryids = valid_batteryids.reshape((-1, 1))
+    # valid_lbl = np.hstack((valid_rul, valid_batteryids))
+    # print(train_fea.shape,  valid_fea.shape)
+    # print(train_rul.shape,train_batteryids.shape,valid_rul.shape,valid_batteryids.shape)
+    # print(train_rul)
+
+    # trainset = TensorDataset(torch.Tensor(train_fea), torch.Tensor(train_lbl))
+    # validset = TensorDataset(torch.Tensor(valid_fea), torch.Tensor(valid_lbl))
+
+    # train_loader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+    # valid_loader = DataLoader(validset, batch_size=valida_batch_size)
+
+
+    return train_fea, train_rul, train_batteryids,valid_fea, valid_rul,valid_batteryids
+
+
+
+
 def run(seq_len, N, curve_lens, curve_funcs, args):
-    train_data = np.load('./dataset/train/soh.npy')
-    test_data = np.load('./dataset/test/soh.npy')
+    # train_data = np.load('./dataset/train/soh.npy')
+    # test_data = np.load('./dataset/test/soh.npy')
+    train_fea,train_data,train_batteryids,test_fea,test_data,valid_batteryids = data_process()
     _, smooth_train_data, _, _, _, _ = interpolate(train_data)
     _, smooth_test_data, _, _, _, _ = interpolate(test_data)
     smooth_train_data = smooth_train_data.reshape(-1, 1)
@@ -169,11 +286,16 @@ def run(seq_len, N, curve_lens, curve_funcs, args):
             start_soh = seq[:, -1, :]
             retrieval_set =  build_retrieval_set(curve_funcs, curve_lens, start_soh.item(), seq_len)
             x = seq.numpy().reshape(-1)
+
+            #encoder,contrastic loss
+            #########score############
             scores = []
             for retrieval_seq in retrieval_set:
                 alignment = dtw(x, retrieval_seq, keep_internals=True) # DTW算法
                 scores.append(alignment.distance)
             scores = np.array(scores)
+
+
             chosen_scores, indices = torch.topk(torch.Tensor(-scores), args.top_k) # 乘 -1 找最小的
             chosen_scores = -chosen_scores
             max_ = torch.max(chosen_scores)
