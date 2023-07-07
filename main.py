@@ -356,7 +356,7 @@ def main():
     # print(curve_lens)
     # assert 0
     print("Curves number after augmentation:", len(curves))
-    
+    #print("test")
     for seq_len in [50, 75, 100, 125]:
     # seq_len = int(args.seq_len)
         for N in [10, 50, 80, 100]:
