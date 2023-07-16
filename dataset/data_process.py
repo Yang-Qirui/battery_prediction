@@ -73,34 +73,35 @@ def main():
 
                     targets.append(sub_col_data[sub_feature_name.index('系统SOH')])
 
-                    features.append(sub_col_data[sub_feature_name.index('系统总电压_V')])
+                    # features.append(sub_col_data[sub_feature_name.index('系统总电压_V')])
                     # features.append(sub_col_data[sub_feature_name.index('系统平均电压')])
                     # features.append(sub_col_data[sub_feature_name.index('系统平均温度')])
 
                     # 1簇feature
-                    features.append(sub_col_data[sub_feature_name.index('1_簇并机总电压')])
-                    features.append(sub_col_data[sub_feature_name.index('1_簇电池总电压')])
-                    features += get_items_feature(r'1_模组\d{1,2}正极柱温度', sub_feature_name, sub_col_data)
-                    features += get_items_feature(r'1_模组\d{1,2}负极柱温度', sub_feature_name, sub_col_data)
-                    features += get_items_feature(r'1_簇单体电压\d{1,2}', sub_feature_name, sub_col_data)
-                    features += get_items_feature(r'1_簇单体温度\d{1,2}', sub_feature_name, sub_col_data)
+                    # features.append(sub_col_data[sub_feature_name.index('1_簇并机总电压')])
+                    for j in range(1, 160):
+                        features.append(sub_col_data[sub_feature_name.index(f'1_簇单体电压{j}')])
+                    # features += get_items_feature(r'1_模组\d{1,2}正极柱温度', sub_feature_name, sub_col_data)
+                    # features += get_items_feature(r'1_模组\d{1,2}负极柱温度', sub_feature_name, sub_col_data)
+                    # features += get_items_feature(r'1_簇单体电压\d{1,2}', sub_feature_name, sub_col_data)
+                    # features += get_items_feature(r'1_簇单体温度\d{1,2}', sub_feature_name, sub_col_data)
 
-                    # 2簇feature
-                    features.append(sub_col_data[sub_feature_name.index('2_簇并机总电压')])
-                    features.append(sub_col_data[sub_feature_name.index('2_簇电池总电压')])
-                    features += get_items_feature(r'2_模组\d{1,2}正极柱温度', sub_feature_name, sub_col_data)
-                    features += get_items_feature(r'2_模组\d{1,2}负极柱温度', sub_feature_name, sub_col_data)
-                    features += get_items_feature(r'2_簇单体电压\d{1,2}', sub_feature_name, sub_col_data)
-                    features += get_items_feature(r'2_簇单体温度\d{1,2}', sub_feature_name, sub_col_data)
+                    # # 2簇feature
+                    # features.append(sub_col_data[sub_feature_name.index('2_簇并机总电压')])
+                    # features.append(sub_col_data[sub_feature_name.index('2_簇电池总电压')])
+                    # features += get_items_feature(r'2_模组\d{1,2}正极柱温度', sub_feature_name, sub_col_data)
+                    # features += get_items_feature(r'2_模组\d{1,2}负极柱温度', sub_feature_name, sub_col_data)
+                    # features += get_items_feature(r'2_簇单体电压\d{1,2}', sub_feature_name, sub_col_data)
+                    # features += get_items_feature(r'2_簇单体温度\d{1,2}', sub_feature_name, sub_col_data)
 
-                    if i != 0:
-                        # 3簇feature
-                        features.append(sub_col_data[sub_feature_name.index('3_簇并机总电压')])
-                        features.append(sub_col_data[sub_feature_name.index('3_簇电池总电压')])
-                        features += get_items_feature(r'3_模组\d{1,2}正极柱温度', sub_feature_name, sub_col_data)
-                        features += get_items_feature(r'3_模组\d{1,2}负极柱温度', sub_feature_name, sub_col_data)
-                        features += get_items_feature(r'3_簇单体电压\d{1,2}', sub_feature_name, sub_col_data)
-                        features += get_items_feature(r'3_簇单体温度\d{1,2}', sub_feature_name, sub_col_data)
+                    # if i != 0:
+                    #     # 3簇feature
+                    #     features.append(sub_col_data[sub_feature_name.index('3_簇并机总电压')])
+                    #     features.append(sub_col_data[sub_feature_name.index('3_簇电池总电压')])
+                    #     features += get_items_feature(r'3_模组\d{1,2}正极柱温度', sub_feature_name, sub_col_data)
+                    #     features += get_items_feature(r'3_模组\d{1,2}负极柱温度', sub_feature_name, sub_col_data)
+                    #     features += get_items_feature(r'3_簇单体电压\d{1,2}', sub_feature_name, sub_col_data)
+                    #     features += get_items_feature(r'3_簇单体温度\d{1,2}', sub_feature_name, sub_col_data)
 
                     equip_features[i].append(features)
                     equip_targets[i].append(targets)
