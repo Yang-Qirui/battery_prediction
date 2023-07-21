@@ -10,9 +10,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from dataset import SeqDataset
 from dtw import *
-from mlp import MLP
+from models import MLP
 import matplotlib.pyplot as plt
 import os
+from utils import score_weight_loss
 
 class NegativeMSELoss(nn.Module):
     def __init__(self):
@@ -30,24 +31,7 @@ def weighted_mse_loss(input, target, weight):
 #     corr = torch.sum(mean_centered_pred * mean_centered_input) / (torch.sqrt(torch.sum(mean_centered_pred ** 2)) * torch.sqrt(torch.sum(mean_centered_input ** 2)))
 #     return corr
 
-def custom_loss(input, output):
-    # 反转输入以使得较小的输入对应较大的输出
-    inverted_input = 1.0 - input
 
-    # 计算输入和输出的误差
-    error = (inverted_input - output).abs()
-
-    # 计算输入和输出间的差异
-    diff_input = torch.abs(input[:-1] - input[1:])
-    diff_output = torch.abs(output[:-1] - output[1:])
-
-    # 计算差异的误差
-    diff_error = (diff_input - diff_output).abs()
-
-    # 将两个误差组合起来得到总的损失
-    # loss = error.sum() + diff_error.sum()
-
-    return error.sum(), diff_error.sum()
 
 def build_retrieval_set(curve_funcs, curve_lens, soh, seq_len):
     retrieval_set = []
@@ -129,7 +113,7 @@ def run(seq_len, N, curve_lens, curve_funcs, args):
                 output = score_model(chosen_scores)
                 # weight = 1 / (1 + output)
                 # print(chosen_scores, output, indices)
-                error, diff = custom_loss(output, chosen_scores)
+                error, diff = score_weight_loss(output, chosen_scores)
                 loss_0 = score_model.loss_weights[0] * error + score_model.loss_weights[1] * diff
 
                 target_cycle = target[i][0].float()

@@ -14,8 +14,10 @@ def interpolate(data, scale_rate=1):
     x = np.linspace(0, 1, original_length)  
 
     # 创建插值函数
-    f = interp1d(x, data.squeeze(-1))  
-    spline = UnivariateSpline(x, data.squeeze(-1), s=5)
+    
+    f = interp1d(x, data)  
+
+    spline = UnivariateSpline(x, data)
 
     # 创建新的x坐标
     new_x = np.linspace(0, 1, new_length)

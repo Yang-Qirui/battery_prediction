@@ -8,6 +8,8 @@ from sklearn.cluster import KMeans
 from scipy.spatial.distance import euclidean
 import argparse
 
+SEQ_LEN = 100
+
 def ts_decompose(data):
     time_index = pd.date_range(start='2022-05-01', periods=len(data))
     time_series = pd.Series(data, index=time_index)
@@ -35,7 +37,7 @@ def main(contamination):
     # 读取.npy文件
     data = np.load('./group0_features.npy')
 
-    random_indices = random.sample(range(0, data.shape[1]-1), 10)
+    random_indices = random.sample(range(0, data.shape[1]-1), 2)
     random_indices.sort()
     # print("ERROR:", random_indices)
 
@@ -57,12 +59,12 @@ def main(contamination):
     from sklearn.neighbors import KernelDensity
     # train_trends = np.transpose(normal_trends)
     probs_list = []
-    for t in range(int(0.2 * trends.shape[1]), trends.shape[1]):
-        partial_trends = normal_trends[:, :t]
+    for t in range(SEQ_LEN, trends.shape[1]):
+        partial_trends = normal_trends[:, t - SEQ_LEN:t]
         # print(normal_trends.shape, abnorm_trends.shape)
         kde = KernelDensity(kernel='gaussian', bandwidth=0.2)
         kde.fit(partial_trends)
-        log_probs = kde.score_samples(trends[:,:t])
+        log_probs = kde.score_samples(trends[:,t - SEQ_LEN:t])
         scaled_log_probs = (log_probs - np.min(log_probs)) / (np.max(log_probs) - np.min(log_probs))
         # threshold = np.percentile(log_probs, int(len(random_indices) / len(trends) * 100))
         # outlier_indices = np.where(log_probs < threshold)[0]
@@ -72,27 +74,27 @@ def main(contamination):
     decomposed_probs = [seasonal_decompose(probs_list[i], model='additive', period=1) for i in range(probs_list.shape[0])]
     prob_trends = [decomp.trend for decomp in decomposed_probs]
 
-    clf = IsolationForest(contamination=contamination, n_estimators=200, max_samples=len(prob_trends)).fit(probs_list)
+    clf = IsolationForest(contamination=contamination).fit(probs_list)
 
     # 预测异常的KDE曲线
     pred = clf.predict(probs_list)
 
     # 找出被认为是异常的曲线的索引
     outlier_indices = np.where(pred == -1)[0]
-    # print("PREDICT:", outlier_indices)
+    print("PREDICT:", outlier_indices)
     # plt.legend()
     true_pos = set(outlier_indices) & set(random_indices)
     precision = len(list(true_pos)) / len(outlier_indices)
     recall = len(list(true_pos)) / len(random_indices)
     print("precision:", precision, "recall:", recall)
     # plot
-    for i, prob_trend in enumerate(prob_trends):
-        # print(prob_curve)
-        # plt.plot([i for i in range(len(prob_curve.trend))], prob_curve.trend, label=f'{i}')
-        plt.plot(prob_trend)
-    plt.xlabel("cycle")
-    plt.ylabel("prob")
-    plt.show()
+    # for i, prob_trend in enumerate(prob_trends):
+    #     # print(prob_curve)
+    #     # plt.plot([i for i in range(len(prob_curve.trend))], prob_curve.trend, label=f'{i}')
+    #     plt.plot(prob_trend)
+    # plt.xlabel("cycle")
+    # plt.ylabel("prob")
+    # plt.show()
 
     return precision, recall
 
@@ -121,6 +123,12 @@ if __name__ == "__main__":
     #         state_dict[best_contamination] += 1
     #     else:
     #         state_dict[best_contamination] = 1
+    t_pre, t_recall = 0, 0
+    for epoch in range(args.epoch):
+        pre, recall = main(0.01)
+        t_pre += pre
+        t_recall += recall
 
+    print(t_pre / args.epoch, t_recall / args.epoch)
     # print(state_dict)
-    main(0.07)
+    # main(0.005)
