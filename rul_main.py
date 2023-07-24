@@ -92,15 +92,18 @@ def run(train_loader, test_loader, args, fea_num):
                 encoded_retrieval_feas = torch.cat((encoded_source[:i], encoded_source[i + 1:]), dim=0)
 
                 relation_scores = []
-                for retrieval_tensor in encoded_retrieval_feas:
-                    # alignment = dtw(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy(), keep_internals=True)
-                    # relation_scores.append(alignment.distance)
-                    s = F.cosine_similarity(encoded_source[i], retrieval_tensor, dim=0).detach().numpy()
-                    # s = F.cosine_similarity(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy())
-                    relation_scores.append(s)
+                # for retrieval_tensor in encoded_retrieval_feas:
+                #     # alignment = dtw(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy(), keep_internals=True)
+                #     # relation_scores.append(alignment.distance)
+                #     s = F.cosine_similarity(encoded_source[i], retrieval_tensor, dim=0).detach().numpy()
+                #     # s = F.cosine_similarity(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy())
+                #     relation_scores.append(s)
 
-                relation_scores = np.array(relation_scores)
-                chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k)
+                # relation_scores = np.array(relation_scores)
+                # chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k)
+                
+                relation_scores = F.cosine_similarity(encoded_source[i].unsqueeze(0), encoded_retrieval_feas,dim=1)
+                chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k,dim=0) # 乘 -1 找最小的
 
                 # chosen_scores, indices = torch.topk(torch.Tensor(-relation_scores), args.top_k) # 乘 -1 找最小的
                 # chosen_scores = -chosen_scores
