@@ -11,6 +11,7 @@ from dtw import dtw
 import numpy as np
 from utils import score_weight_loss
 import torch.nn as nn
+import torch.nn.functional as F
 
 def contrastive_loss(source, pos_sample, tao):
 
@@ -92,24 +93,30 @@ def run(train_loader, test_loader, args, fea_num):
 
                 relation_scores = []
                 for retrieval_tensor in encoded_retrieval_feas:
-                    alignment = dtw(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy(), keep_internals=True)
-                    relation_scores.append(alignment.distance)
+                    # alignment = dtw(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy(), keep_internals=True)
+                    # relation_scores.append(alignment.distance)
+                    s = F.cosine_similarity(encoded_source[i], retrieval_tensor, dim=0).detach().numpy()
+                    # s = F.cosine_similarity(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy())
+                    relation_scores.append(s)
 
                 relation_scores = np.array(relation_scores)
-                
-                chosen_scores, indices = torch.topk(torch.Tensor(-relation_scores), args.top_k) # 乘 -1 找最小的
-                chosen_scores = -chosen_scores
+                chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k)
+
+                # chosen_scores, indices = torch.topk(torch.Tensor(-relation_scores), args.top_k) # 乘 -1 找最小的
+                # chosen_scores = -chosen_scores
                 max_ = torch.max(chosen_scores)
                 min_ = torch.min(chosen_scores)
                 chosen_scores = (chosen_scores - min_) / (max_ - min_)
                 output = relation_model(chosen_scores)
-                
+                # print(output)
+
                 error, diff = score_weight_loss(output, chosen_scores)
                 # TODO: Here meet a bug. the loss_0 will become negative
                 # loss_0 = relation_model.loss_weights[0] * error + relation_model.loss_weights[1] * diff
                 loss_0 = error + diff
 
                 predict_rul = torch.sum(chosen_scores * retreival_ruls[indices])
+                # print(target_rul, predict_rul)
                 loss_1 = nn.MSELoss()(target_rul, predict_rul)
                 loss += loss_0 + loss_1
 
@@ -188,7 +195,7 @@ if __name__ == "__main__":
     argparser.add_argument("--fc-out", type=int, help="embedded sequence dimmension", default=64)  # 128
     argparser.add_argument("--dropout", type=float, default=0.3)  # 0.1
     argparser.add_argument("--lstm-layer", type=int, default=1)  # 0.1
-    argparser.add_argument("-top_k", help="use top k curves to retrieve", type=int, default=25)
+    argparser.add_argument("-top_k", help="use top k curves to retrieve", type=int, default=7)
     argparser.add_argument("-tao", help="tao in contrastive loss calculation ", type=float, default=0.5)
     argparser.add_argument("-alpha", help="zoom factor of contrastive loss", type=float, default=0.1)
        
