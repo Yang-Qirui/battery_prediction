@@ -11,7 +11,10 @@ from dtw import dtw
 import numpy as np
 from utils import score_weight_loss
 import torch.nn as nn
+from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
 
 def contrastive_loss(source, pos_sample, tao):
 
@@ -55,32 +58,43 @@ def run(train_loader, test_loader, args, fea_num):
     relation_lr_scheduler = StepLR(
             relation_model_optimizer, step_size=100, gamma=args.gamma
         )
+    
+
+
+    train_loss = []
     train_loss = []
     for e in range(args.epoch):
         all_retrieval_feas = []
-        all_retrieval_lbls = []
+        all_retrieval_lbls = []   
+
 
         encoder_lr_scheduler.step(e)
         relation_lr_scheduler.step(e)
+
+            
         print(
             "training epoch:",
             e,
             "learning rate:",
             encoder_optimizer.param_groups[0]["lr"],
         )
-        encoder.train()
-        relation_model.train()
+
+
+        encoder.train().cuda()
+        relation_model.train().cuda()
+
+
         for step, ((features, labels), (nei_features, _)) in enumerate(train_loader):
-            features = features.squeeze(0)
-            nei_features = nei_features.squeeze(0)
-            labels = labels.squeeze(0)
+            features = features.squeeze(0).cuda()
+            nei_features = nei_features.squeeze(0).cuda()
+            labels = labels.squeeze(0).cuda()
             encoded_source = encoder(features)
-            all_retrieval_feas.append(encoded_source)
-            all_retrieval_lbls.append(labels)
+            all_retrieval_feas.append(encoded_source.cpu())
+            all_retrieval_lbls.append(labels.cpu())
             encoded_neigh = encoder(nei_features)
             assert encoded_source.shape == encoded_neigh.shape
             loss = 0
-            contrastive_l = contrastive_loss(encoded_source, encoded_neigh, args.tao)
+            # contrastive_l = contrastive_loss(encoded_source, encoded_neigh, args.tao)
             for i in range(len(features)):
                 '''
                     generate retrieval set
@@ -92,39 +106,46 @@ def run(train_loader, test_loader, args, fea_num):
                 encoded_retrieval_feas = torch.cat((encoded_source[:i], encoded_source[i + 1:]), dim=0)
 
                 relation_scores = []
-                # for retrieval_tensor in encoded_retrieval_feas:
-                #     # alignment = dtw(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy(), keep_internals=True)
-                #     # relation_scores.append(alignment.distance)
-                #     s = F.cosine_similarity(encoded_source[i], retrieval_tensor, dim=0).detach().numpy()
-                #     # s = F.cosine_similarity(encoded_source[i].detach().numpy(), retrieval_tensor.detach().numpy())
-                #     relation_scores.append(s)
+                        
 
+                # for retrieval_tensor in encoded_retrieval_feas:
+                #     s = F.cosine_similarity(encoded_source[i], retrieval_tensor, dim=0).cpu().detach().numpy()
+                #     relation_scores.append(s)
                 # relation_scores = np.array(relation_scores)
-                # chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k)
-                
+
+                        
+                # import pdb;pdb.set_trace()
                 relation_scores = F.cosine_similarity(encoded_source[i].unsqueeze(0), encoded_retrieval_feas,dim=1)
                 chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k,dim=0) # 乘 -1 找最小的
 
-                # chosen_scores, indices = torch.topk(torch.Tensor(-relation_scores), args.top_k) # 乘 -1 找最小的
+
+                # relation_scores = F.cosine_similarity(encoded_source, encoded_retrieval_feas)
+                # chosen_scores, indices = torch.topk(relation_scores, args.top_k)
+                        
+                # relation_scores = F.cosine_similarity(encoded_source[:-1], encoded_retrieval_feas, dim=1)
+                # relation_scores = relation_scores.t() # 转置操作，使得relation_scores的形状与原来代码中的一致
+                # chosen_scores, indices = torch.topk(relation_scores, args.top_k)
+
+
                 # chosen_scores = -chosen_scores
                 max_ = torch.max(chosen_scores)
                 min_ = torch.min(chosen_scores)
                 chosen_scores = (chosen_scores - min_) / (max_ - min_)
-                output = relation_model(chosen_scores)
-                # print(output)
+                chosen_scores=chosen_scores.cuda()
 
+                output = relation_model(chosen_scores)
+                
                 error, diff = score_weight_loss(output, chosen_scores)
                 # TODO: Here meet a bug. the loss_0 will become negative
                 # loss_0 = relation_model.loss_weights[0] * error + relation_model.loss_weights[1] * diff
                 loss_0 = error + diff
 
                 predict_rul = torch.sum(chosen_scores * retreival_ruls[indices])
-                # print(target_rul, predict_rul)
                 loss_1 = nn.MSELoss()(target_rul, predict_rul)
                 loss += loss_0 + loss_1
 
             loss /= len(features)
-            loss += contrastive_l * args.alpha
+            # loss += contrastive_l * args.alpha
             encoder_optimizer.zero_grad()
             relation_model_optimizer.zero_grad()
             loss.backward()
@@ -141,26 +162,30 @@ def run(train_loader, test_loader, args, fea_num):
                     "avg train loss:",
                     np.average(train_loss),
                 )
-
+            
         print("Start validating")
         encoder.eval()
         relation_model.eval()
         all_retrieval_feas = torch.vstack(all_retrieval_feas)
-        all_retrieval_lbls = torch.vstack(all_retrieval_lbls)
+        all_retrieval_lbls = torch.vstack(all_retrieval_lbls).cuda()
         print(all_retrieval_feas.shape, all_retrieval_lbls.shape)
         loss = 0
+        percent_rul=0
+        # percent = 0
         batch_num = 0
         with torch.no_grad():
             for step, (seq, target) in enumerate(test_loader):
-                target_rul = target[:, -1]
-                x = encoder(seq)
-                scores = []
-                for retrieval_seq in all_retrieval_feas:
-                    alignment = dtw(x.detach().numpy(), retrieval_seq.detach().numpy(), keep_internals=True) # DTW算法
-                    scores.append(alignment.distance)
-                scores = np.array(scores)
-                chosen_scores, indices = torch.topk(torch.Tensor(-scores), args.top_k) # 乘 -1 找最小的
-                chosen_scores = -chosen_scores
+                target_rul = target[:, -1].cuda()
+                x = encoder(seq.cuda())
+                #scores = []
+                #import pdb;pdb.set_trace()
+                scores = F.cosine_similarity(x, all_retrieval_feas.cuda(),dim=1)
+                # for retrieval_seq in all_retrieval_feas:
+                #     alignment = dtw(x.detach().cpu().numpy(), retrieval_seq.detach().cpu().numpy(), keep_internals=True) # DTW算法
+                #     scores.append(alignment.distance)
+                # scores = np.array(scores)
+                chosen_scores, indices = torch.topk(torch.Tensor(scores), args.top_k,dim=0) # 乘 -1 找最小的
+                # chosen_scores = -chosen_scores
                 max_ = torch.max(chosen_scores)
                 min_ = torch.min(chosen_scores)
                 chosen_scores = (chosen_scores - min_) / (max_ - min_)
@@ -169,11 +194,29 @@ def run(train_loader, test_loader, args, fea_num):
                 predict_rul = torch.sum(chosen_scores * all_retrieval_lbls[indices, -1])
 
                 if step % 40 == 0:
-                    print(predict_rul * 3000, target_rul * 3000)
+                    print("step:",
+                            step,
+                            "predict_rul",
+                            predict_rul * 3000, 
+                            "target_rul",
+                            target_rul * 3000)
                 # print(output_clone.sum().detach().item() * self_curve_len, target_cycle.detach().item())
-                loss += nn.MSELoss()(predict_rul, target_rul)
+               
+                loss_rul = nn.MSELoss()(predict_rul, target_rul)
+                percent_rul+=torch.abs(torch.sqrt(loss_rul)/target_rul)
+                
+                # percent_rul = loss_rul/target_rul
+                loss = loss+loss_rul
+                # percent = percent+percent_rul
                 batch_num += 1
-            print("test_average_loss", loss / batch_num)
+            print("test_average_loss", 
+                  loss / batch_num,
+                   "test_loss_percent",
+                   percent_rul / batch_num,
+                  )
+ 
+
+            
 
 def main(args):
     train_fea, train_lbl, test_fea, test_lbl = our_data_loader_generate()
@@ -190,7 +233,7 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("-batch", type=int, default=32)
     argparser.add_argument("-valid_batch", type=int, default=1)
-    argparser.add_argument("-epoch", type=int, default=100)
+    argparser.add_argument("-epoch", type=int, default=100)#100
     argparser.add_argument("-lr", help="initial learning rate", type=float, default=1e-3)
     argparser.add_argument("-gamma", help="learning rate decay rate", type=float, default=0.9)
     argparser.add_argument("--lstm-hidden", type=int, help="lstm hidden layer number", default=128)  # 128
@@ -198,7 +241,7 @@ if __name__ == "__main__":
     argparser.add_argument("--fc-out", type=int, help="embedded sequence dimmension", default=64)  # 128
     argparser.add_argument("--dropout", type=float, default=0.3)  # 0.1
     argparser.add_argument("--lstm-layer", type=int, default=1)  # 0.1
-    argparser.add_argument("-top_k", help="use top k curves to retrieve", type=int, default=7)
+    argparser.add_argument("-top_k", help="use top k curves to retrieve", type=int, default=5)
     argparser.add_argument("-tao", help="tao in contrastive loss calculation ", type=float, default=0.5)
     argparser.add_argument("-alpha", help="zoom factor of contrastive loss", type=float, default=0.1)
        
