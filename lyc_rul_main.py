@@ -160,7 +160,7 @@ class RUL_RetrieveNet(nn.Module):
 
 def my_run(train_loader, test_loader, args, fea_num, seq_len):
     device = args.device
-    net = RUL_RetrieveNet(fea_num, seq_len).to(device)
+    net = RUL_RetrieveNet(fea_num, seq_len, n_refs=args.top_k).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
 
     # for sample in train_loader.dataset:
@@ -183,7 +183,7 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
                 battery_id_mat = ((battery_ids.unsqueeze(-1) - battery_ids.unsqueeze(0)) != 0)
                 ref_weight_mat = enc_sim_mat * battery_id_mat
 
-                ref_weight, ref_idx = ref_weight_mat.topk(k=3, dim=1)
+                ref_weight, ref_idx = ref_weight_mat.topk(k=args.top_k, dim=1)
                 ref_enc = enc[ref_idx]
                 ref_rul = labels[ref_idx]
                 predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
@@ -224,7 +224,7 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
             battery_id_mat = ((battery_ids.unsqueeze(-1) - refset_battery_ids.unsqueeze(0)) != 0)
             ref_weight_mat = enc_sim_mat * battery_id_mat
 
-            ref_weight, ref_idx = ref_weight_mat.topk(k=3, dim=1)
+            ref_weight, ref_idx = ref_weight_mat.topk(k=args.top_k, dim=1)
             ref_enc = refset_enc[ref_idx]
             ref_rul = refset_labels[ref_idx]
             predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
@@ -303,7 +303,7 @@ if __name__ == "__main__":
     argparser.add_argument("--fc-out", type=int, help="embedded sequence dimmension", default=64)  # 128
     argparser.add_argument("--dropout", type=float, default=0.3)  # 0.1
     argparser.add_argument("--lstm-layer", type=int, default=1)  # 0.1
-    argparser.add_argument("-top_k", help="use top k curves to retrieve", type=int, default=5)
+    argparser.add_argument("-top_k", help="use top k curves to retrieve", type=int, default=3)
     argparser.add_argument("-tao", help="tao in contrastive loss calculation ", type=float, default=0.5)
     argparser.add_argument("-alpha", help="zoom factor of contrastive loss", type=float, default=0.1)
     
