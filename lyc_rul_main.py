@@ -103,7 +103,7 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
         print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f} ({total_num} samples)')
 
 
-class RetrieveRUL_Net(nn.Module):
+class RUL_RetrieveNet(nn.Module):
     def __init__(self, fea_num, seq_len, hid_size=128, n_refs=3):
         super().__init__()
         self.n_refs = n_refs
@@ -115,10 +115,12 @@ class RetrieveRUL_Net(nn.Module):
         relation_inp_dim = hid_size * 2
         self.relation_linear1 = nn.Linear(relation_inp_dim, hid_size)
         self.relation_linear2 = nn.Linear(hid_size, 1)
+        self.relation_parameter_free = True
 
         aggregator_inp_dim = hid_size * n_refs + hid_size + n_refs
         self.aggregator_linear1 = nn.Linear(aggregator_inp_dim, hid_size)
         self.aggregator_linear2 = nn.Linear(hid_size, 1)
+        self.aggregator_parameter_free = False
     
     def encode(self, x):
         batch_sz = x.size(0)
@@ -128,22 +130,37 @@ class RetrieveRUL_Net(nn.Module):
         y = F.normalize(xx, dim=1)
         return xx
 
-    def relation(self, enc1, enc2):
-        batch_sz = x.size(0)
-        xx = F.relu(self.relation_linear1(xx))
-        y = F.sigmoid(self.relation_linear2(xx))
-        return y
+    def relation(self, enc, enc_):
+        if self.relation_parameter_free:
+            # parameter free version
+            enc_sim_mat = torch.mm(enc, enc_.t())
+            enc_sim_mat = torch.clamp(enc_sim_mat, min=0)
+            return enc_sim_mat
+        else:
+            # TODO
+            batch_sz = x.size(0)
+            xx = F.relu(self.relation_linear1(xx))
+            y = F.sigmoid(self.relation_linear2(xx))
+            return y
     
-    def aggregate(self, x):
-        batch_sz = x.size(0)
-        xx = F.relu(self.aggregator_linear1(xx))
-        y = self.aggregator_linear2(xx)
-        return y
+    def aggregate(self, self_enc, ref_weight, ref_enc, ref_rul):
+        if self.aggregator_parameter_free:
+            # parameter free version, directly use the weights to synthsize RUL
+            ref_weight = ref_weight / ref_weight.sum(dim=1, keepdim=True)
+            weighted_ruls = ref_weight * ref_rul
+            predictions = weighted_ruls.sum(dim=1, keepdim=True)
+            return predictions
+        else:
+            batch_sz = self_enc.size(0)
+            xx = torch.concatenate([self_enc, ref_enc.view(batch_sz, -1), ref_rul], dim=1)
+            xx = F.relu(self.aggregator_linear1(xx))
+            predictions = self.aggregator_linear2(xx)
+            return predictions
 
 
 def my_run(train_loader, test_loader, args, fea_num, seq_len):
     device = args.device
-    net = RetrieveRUL_Net(fea_num, seq_len).to(device)
+    net = RUL_RetrieveNet(fea_num, seq_len).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
 
     # for sample in train_loader.dataset:
@@ -160,25 +177,17 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
                 batch_sz = labels.size(0)
                 net.zero_grad()
                 enc = net.encode(features)
-                enc_sim_mat = torch.mm(enc, enc.t())
-                enc_sim_mat = torch.clamp(enc_sim_mat, min=1e-5)
+                enc_sim_mat = net.relation(enc, enc)
+
+                # mask out the same-battery references
                 battery_id_mat = ((battery_ids.unsqueeze(-1) - battery_ids.unsqueeze(0)) != 0)
-
                 ref_weight_mat = enc_sim_mat * battery_id_mat
-                ref_weight_mat = ref_weight_mat / ref_weight_mat.sum(dim=1, keepdim=True)
 
-                # directly use the weights to synthsize RUL
-                weighted_ruls = ref_weight_mat * labels.unsqueeze(0)
-                predictions = weighted_ruls.sum(dim=1, keepdim=False)
+                ref_weight, ref_idx = ref_weight_mat.topk(k=3, dim=1)
+                ref_enc = enc[ref_idx]
+                ref_rul = labels[ref_idx]
+                predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
 
-                # print(enc_sim_mat)
-                # print(battery_id_mat)
-                # print(ref_weight_mat)
-                # print(weighted_ruls)
-                # print('predictions', predictions)
-                # input()
-
-                # predictions = torch.clamp(predictions, min=0.0001)
                 errors = torch.abs(predictions - labels) / torch.max(predictions, labels)
                 error = errors.mean()
                 # loss = error
@@ -194,27 +203,53 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
         train_loss = total_loss / total_num
         train_error = total_error / total_num
 
-        # total_num = 0
-        # total_error = 0
-        # total_loss = 0
-        # net.eval()
-        # for battery_ids, features, labels in test_loader:
-        #     battery_ids, features, labels = battery_ids.to(device), features.to(device), labels.to(device)
-        #     predictions = net(features).squeeze()
-        #     # predictions = torch.clamp(predictions, min=0.0001)
-        #     errors = torch.abs(predictions - labels) / torch.max(predictions, labels)
-        #     loss = F.mse_loss(predictions, labels, reduce='sum')
-        #     # print(f'predictions:{predictions.shape},\nlabels:{labels.shape},\nerrors:{errors.shape}')
-        #     total_error += errors.sum().item()
-        #     total_loss += loss
-        #     total_num += errors.size(0)
+        total_num = 0
+        total_error = 0
+        total_loss = 0
+        net.eval()
+        # prepare a reference set
+        refset_train_loader = DataLoader(train_loader.dataset, batch_size=1000, shuffle=True)
+        refset_battery_ids, refset_features, refset_labels = next(iter(refset_train_loader))
+        refset_battery_ids = refset_battery_ids.to(device)
+        refset_features = refset_features.to(device)
+        refset_labels = refset_labels.to(device)
+        refset_enc = net.encode(refset_features)
+        for battery_ids, features, labels in test_loader:
+            battery_ids, features, labels = battery_ids.to(device), features.to(device), labels.to(device)
+            batch_sz = labels.size(0)
+            enc = net.encode(features)
+            enc_sim_mat = net.relation(enc, refset_enc)
+
+            # mask out the same-battery references
+            battery_id_mat = ((battery_ids.unsqueeze(-1) - refset_battery_ids.unsqueeze(0)) != 0)
+            ref_weight_mat = enc_sim_mat * battery_id_mat
+
+            ref_weight, ref_idx = ref_weight_mat.topk(k=3, dim=1)
+            ref_enc = refset_enc[ref_idx]
+            ref_rul = refset_labels[ref_idx]
+            predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
+
+            errors = torch.abs(predictions - labels) / torch.max(predictions, labels)
+            loss = F.mse_loss(predictions, labels, reduce='sum')
+
+            # print(f'predictions:{predictions.shape},\nlabels:{labels.shape},\nerrors:{errors.shape}')
+            # print(enc_sim_mat.shape)
+            # print(battery_id_mat.shape)
+            # print(ref_weight_mat.shape)
+            # print(ref_enc.shape)
+            # print(ref_rul.shape)
+            # print('predictions', predictions)
+            # input()
+            
+            total_error += errors.sum().item()
+            total_loss += loss
+            total_num += errors.size(0)
         test_loss = total_loss / total_num
         test_error = total_error / total_num
         print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f} ({total_num} samples)')
 
 
 def contrastive_loss(source, pos_sample, tao):
-
     assert source.shape[0] == pos_sample.shape[0]
     N = source.shape[0]
 
@@ -243,173 +278,6 @@ def contrastive_loss(source, pos_sample, tao):
     # print((e-s).microseconds / 10**6)
     return L / (2 * N)
 
-def run(train_loader, test_loader, args, fea_num):
-    encoder = lstm_encoder(indim=fea_num, hiddendim=args.lstm_hidden, fcdim=args.fc_hidden, outdim=args.fc_out, n_layers=args.lstm_layer, dropout=args.dropout)
-    encoder_optimizer = Adam(encoder.parameters(), lr=args.lr)
-    encoder_lr_scheduler = StepLR(encoder_optimizer, step_size=1, gamma=args.gamma)
-    relation_model = MLP(in_channel=args.top_k, out_channel=args.top_k)
-    relation_model_optimizer = Adam(
-            relation_model.parameters(),
-            lr=args.lr,
-        )
-    relation_lr_scheduler = StepLR(
-            relation_model_optimizer, step_size=100, gamma=args.gamma
-        )
-
-    train_loss = []
-    train_loss = []
-    for e in range(args.epoch):
-        all_retrieval_feas = []
-        all_retrieval_lbls = []   
-
-
-        encoder_lr_scheduler.step(e)
-        relation_lr_scheduler.step(e)
-
-            
-        print(
-            "training epoch:",
-            e,
-            "learning rate:",
-            encoder_optimizer.param_groups[0]["lr"],
-        )
-
-
-        encoder.train().cuda()
-        relation_model.train().cuda()
-
-
-        for step, ((features, labels), (nei_features, _)) in enumerate(train_loader):
-            features = features.squeeze(0).cuda()
-            nei_features = nei_features.squeeze(0).cuda()
-            labels = labels.squeeze(0).cuda()
-            encoded_source = encoder(features)
-            all_retrieval_feas.append(encoded_source.cpu())
-            all_retrieval_lbls.append(labels.cpu())
-            encoded_neigh = encoder(nei_features)
-            assert encoded_source.shape == encoded_neigh.shape
-            loss = 0
-            # contrastive_l = contrastive_loss(encoded_source, encoded_neigh, args.tao)
-            for i in range(len(features)):
-                '''
-                    generate retrieval set
-                '''
-                retreival_lbls = torch.cat((labels[:i], labels[i + 1 :]), dim=0)
-                retreival_ruls = retreival_lbls[:, -1]
-                target_rul = labels[i, -1]
-
-                encoded_retrieval_feas = torch.cat((encoded_source[:i], encoded_source[i + 1:]), dim=0)
-
-                relation_scores = []
-                        
-
-                # for retrieval_tensor in encoded_retrieval_feas:
-                #     s = F.cosine_similarity(encoded_source[i], retrieval_tensor, dim=0).cpu().detach().numpy()
-                #     relation_scores.append(s)
-                # relation_scores = np.array(relation_scores)
-
-                        
-                # import pdb;pdb.set_trace()
-                relation_scores = F.cosine_similarity(encoded_source[i].unsqueeze(0), encoded_retrieval_feas,dim=1)
-                chosen_scores, indices = torch.topk(torch.Tensor(relation_scores), args.top_k,dim=0) # 乘 -1 找最小的
-
-
-                # relation_scores = F.cosine_similarity(encoded_source, encoded_retrieval_feas)
-                # chosen_scores, indices = torch.topk(relation_scores, args.top_k)
-                        
-                # relation_scores = F.cosine_similarity(encoded_source[:-1], encoded_retrieval_feas, dim=1)
-                # relation_scores = relation_scores.t() # 转置操作，使得relation_scores的形状与原来代码中的一致
-                # chosen_scores, indices = torch.topk(relation_scores, args.top_k)
-
-
-                # chosen_scores = -chosen_scores
-                max_ = torch.max(chosen_scores)
-                min_ = torch.min(chosen_scores)
-                chosen_scores = (chosen_scores - min_) / (max_ - min_)
-                chosen_scores=chosen_scores.cuda()
-
-                output = relation_model(chosen_scores)
-                
-                error, diff = score_weight_loss(output, chosen_scores)
-                # TODO: Here meet a bug. the loss_0 will become negative
-                # loss_0 = relation_model.loss_weights[0] * error + relation_model.loss_weights[1] * diff
-                loss_0 = error + diff
-
-                predict_rul = torch.sum(chosen_scores * retreival_ruls[indices])
-                loss_1 = nn.MSELoss()(target_rul, predict_rul)
-                loss += loss_0 + loss_1
-
-            loss /= len(features)
-            # loss += contrastive_l * args.alpha
-            encoder_optimizer.zero_grad()
-            relation_model_optimizer.zero_grad()
-            loss.backward()
-            encoder_optimizer.step()
-            relation_model_optimizer.step()
-            train_loss.append(loss.cpu().detach().numpy())
-
-            if step % 40 == 0:
-                print(
-                    "step:",
-                    step,
-                    "train loss:",
-                    train_loss[-1],
-                    "avg train loss:",
-                    np.average(train_loss),
-                )
-            
-        print("Start validating")
-        encoder.eval()
-        relation_model.eval()
-        all_retrieval_feas = torch.vstack(all_retrieval_feas)
-        all_retrieval_lbls = torch.vstack(all_retrieval_lbls).cuda()
-        print(all_retrieval_feas.shape, all_retrieval_lbls.shape)
-        loss = 0
-        percent_rul=0
-        # percent = 0
-        batch_num = 0
-        with torch.no_grad():
-            for step, (seq, target) in enumerate(test_loader):
-                target_rul = target[:, -1].cuda()
-                x = encoder(seq.cuda())
-                #scores = []
-                #import pdb;pdb.set_trace()
-                scores = F.cosine_similarity(x, all_retrieval_feas.cuda(),dim=1)
-                # for retrieval_seq in all_retrieval_feas:
-                #     alignment = dtw(x.detach().cpu().numpy(), retrieval_seq.detach().cpu().numpy(), keep_internals=True) # DTW算法
-                #     scores.append(alignment.distance)
-                # scores = np.array(scores)
-                chosen_scores, indices = torch.topk(torch.Tensor(scores), args.top_k,dim=0) # 乘 -1 找最小的
-                # chosen_scores = -chosen_scores
-                max_ = torch.max(chosen_scores)
-                min_ = torch.min(chosen_scores)
-                chosen_scores = (chosen_scores - min_) / (max_ - min_)
-                output = relation_model(chosen_scores)
-
-                predict_rul = torch.sum(chosen_scores * all_retrieval_lbls[indices, -1])
-
-                if step % 40 == 0:
-                    print("step:",
-                            step,
-                            "predict_rul",
-                            predict_rul * 3000, 
-                            "target_rul",
-                            target_rul * 3000)
-                # print(output_clone.sum().detach().item() * self_curve_len, target_cycle.detach().item())
-               
-                loss_rul = nn.MSELoss()(predict_rul, target_rul)
-                percent_rul+=torch.abs(torch.sqrt(loss_rul)/target_rul)
-                
-                # percent_rul = loss_rul/target_rul
-                loss = loss+loss_rul
-                # percent = percent+percent_rul
-                batch_num += 1
-            print("test_average_loss", 
-                  loss / batch_num,
-                   "test_loss_percent",
-                   percent_rul / batch_num,
-                  )
- 
 
 def main(args):
     train_ds = BatteryDataset(train=True)
