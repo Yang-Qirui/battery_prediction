@@ -76,31 +76,69 @@ def our_data_loader_generate(pkl_dir='./data/our_data/'):
 
 class BatteryDataset(Dataset):
     def __init__(self, data_dir='./data/our_data/', train=True, seqlen=100, stride=10):
+        #import pdb;pdb.set_trace()
         train_fea, train_lbl, test_fea, test_lbl = our_data_loader_generate(data_dir)
         self.seqlen = seqlen
         self.stride = stride
         if train:
             self.fea = train_fea
             self.lbl = train_lbl
+            self.samples = self._gen_samples_test()
         else:
             self.fea = test_fea
             self.lbl = test_lbl
-        self.samples = self._gen_samples()
+            self.samples = self._gen_samples_test()
     
+    # def _gen_samples(self):
+    #     samples = []
+    #     for battery_id, fea in enumerate(self.fea):
+    #         lbl = self.lbl[battery_id]
+    #         for ratio in range(4):
+    #             print(f'battery {battery_id}, num_cycles {len(fea)}, rul@0 {lbl[0]}, last_cycle_SOH {fea[-1][0]}')
+    #             for cycle_id in list(range(len(fea)//(ratio+1)))[10::self.stride]:
+    #                 if cycle_id + self.seqlen >= len(fea) - 1 or cycle_id + self.seqlen >= 1500:
+    #                     break
+    #                 fea_seq = fea[cycle_id:cycle_id+self.seqlen*(ratio+1):(ratio+1)]
+    #                 rul = lbl[cycle_id+self.seqlen*(ratio+1)]
+    #                 samples.append((
+    #                     torch.tensor(battery_id, dtype=torch.int),
+    #                     torch.tensor(fea_seq, dtype=torch.float),
+    #                     torch.tensor(rul, dtype=torch.float)))
+    #     return samples
     def _gen_samples(self):
         samples = []
         for battery_id, fea in enumerate(self.fea):
             lbl = self.lbl[battery_id]
             print(f'battery {battery_id}, num_cycles {len(fea)}, rul@0 {lbl[0]}, last_cycle_SOH {fea[-1][0]}')
             for cycle_id in list(range(len(fea)))[10::self.stride]:
-                if cycle_id + self.seqlen >= len(fea) - 1:
+                if cycle_id + self.seqlen >= len(fea) - 1  or cycle_id + self.seqlen >= 1500:
                     break
                 fea_seq = fea[cycle_id:cycle_id+self.seqlen]
                 rul = lbl[cycle_id+self.seqlen]
                 samples.append((
-                    torch.tensor(battery_id, dtype=torch.int),
-                    torch.tensor(fea_seq, dtype=torch.float),
-                    torch.tensor(rul, dtype=torch.float)))
+                        torch.tensor(battery_id, dtype=torch.int),
+                        torch.tensor(fea_seq, dtype=torch.float),
+                        torch.tensor(rul, dtype=torch.float),
+                        torch.tensor(len(fea),dtype=torch.float)
+                        ))
+        return samples
+    def _gen_samples_test(self):
+        samples = []
+        for battery_id, fea in enumerate(self.fea):
+            lbl = self.lbl[battery_id]
+            print(f'battery {battery_id}, num_cycles {len(fea)}, rul@0 {lbl[0]}, last_cycle_SOH {fea[-1][0]}')
+            for cycle_id in list(range(len(fea)))[10::self.stride]:
+                if cycle_id + self.seqlen >= len(fea) - 1  :
+                    break
+                fea_seq = fea[cycle_id:cycle_id+self.seqlen]
+                rul = lbl[cycle_id+self.seqlen]
+                samples.append((
+                        torch.tensor(battery_id, dtype=torch.int),
+                        torch.tensor(fea_seq, dtype=torch.float),
+                        torch.tensor(rul, dtype=torch.float),
+                        torch.tensor(len(fea)-self.seqlen,dtype=torch.float)
+                        )),
+                        
         return samples
         
     def __getitem__(self, idx):
