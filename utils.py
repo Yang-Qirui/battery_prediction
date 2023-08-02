@@ -10,7 +10,7 @@ from datetime import datetime
 import pandas as pd
 from tool import EarlyStopping
 from sklearn.metrics import roc_auc_score,mean_squared_error
-
+import copy
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -55,7 +55,7 @@ def interp(v, q, num):
     return q_new
 
 def get_xy(name, series_lens, i_low, i_upp, v_low, v_upp, q_low, q_upp, rul_factor, cap_factor, pkl_dir,
-             raw_features=True, fill_with_zero=True, seriesnum=None):
+             raw_features=True, fill_with_zero=True, seriesnum=1500):
     """
     Args:
         n_cyc (int): The previous cycles number for model input
@@ -116,40 +116,45 @@ def get_xy(name, series_lens, i_low, i_upp, v_low, v_upp, q_low, q_upp, rul_fact
         return np.array(all_fea), A_rul
     feature_num = len(all_fea[0])
     all_series, all_ruls = np.empty((0, np.max(series_lens), feature_num)), np.empty((0, 3))
-    for series_len in series_lens:
-        # series_num = len(all_fea) // series_len
-        # series = np.lib.stride_tricks.as_strided(np.array(all_fea), (series_num, series_len, feature_num))
-        series = np.lib.stride_tricks.sliding_window_view(all_fea, (series_len, feature_num))
-        series = series.squeeze()
-        full_series = []
-        if series_len < np.max(series_lens) and fill_with_zero:
-            zeros = np.zeros((np.max(series_lens) - series_len, feature_num))
-            for seriesidx in range(series.shape[0]):
-                # import pdb;pdb.set_trace()
-                full_series.append(np.concatenate((series[seriesidx], zeros)))
-        elif series_len == np.max(series_lens):
-            full_series = series
-        # ruls = np.array(A_rul[series_len - 1:]) / rul_factor
-        # series.tolist()
-        full_series = np.array(full_series)
+    for ratio in range(4):
+        tmpfea=copy.deepcopy(all_fea)
+        tmprul=copy.deepcopy(A_rul)
+        tmpfea=tmpfea[0::ratio+1]
+        tmprul=tmprul[0::ratio+1]
+        for series_len in series_lens:
+            # series_num = len(all_fea) // series_len
+            # series = np.lib.stride_tricks.as_strided(np.array(all_fea), (series_num, series_len, feature_num))
+            series = np.lib.stride_tricks.sliding_window_view(tmpfea, (series_len, feature_num))
+            series = series.squeeze()
+            full_series = []
+            if series_len < np.max(series_lens) and fill_with_zero:
+                zeros = np.zeros((np.max(series_lens) - series_len, feature_num))
+                for seriesidx in range(series.shape[0]):
+                    # import pdb;pdb.set_trace()
+                    full_series.append(np.concatenate((series[seriesidx], zeros)))
+            elif series_len == np.max(series_lens):
+                full_series = series
+            # ruls = np.array(A_rul[series_len - 1:]) / rul_factor
+            # series.tolist()
+            full_series = np.array(full_series)
 
-        full_seq_len = len(A_rul)
+            full_seq_len = len(tmprul)
 
-        if isinstance(A_rul, dict):
-            tmp = []
-            for k, v in A_rul.items():
-                if k >= series_len:
-                    tmp.append([v / rul_factor, full_seq_len / rul_factor, v / full_seq_len])
-            ruls = tmp
-        else:
-            ruls = A_rul[series_len - 1:].tolist()
-            for i in range(len(ruls)):
-                ruls[i] = [ruls[i] / rul_factor, full_seq_len / rul_factor, ruls[i] / full_seq_len]
-        # import pdb;pdb.set_trace()
-        # print(all_series.shape, all_ruls.shape)
-        all_series = np.append(all_series, full_series, axis=0)
-        ruls = np.array(ruls).astype(float)
-        all_ruls = np.append(all_ruls, ruls, axis=0)
+            if isinstance(A_rul, dict):
+                tmp = []
+                for k, v in A_rul.items():
+                    if k >= series_len:
+                        tmp.append([v / rul_factor, full_seq_len / rul_factor, v / full_seq_len])
+                ruls = tmp
+            else:
+                ruls = tmprul[series_len/(ratio+1) - 1:].tolist()
+                for i in range(len(ruls)):
+                    ruls[i] = [ruls[i] / rul_factor, full_seq_len / rul_factor, ruls[i] / full_seq_len]
+            # import pdb;pdb.set_trace()
+            # print(all_series.shape, all_ruls.shape)
+            all_series = np.append(all_series, full_series, axis=0)
+            ruls = np.array(ruls).astype(float)
+            all_ruls = np.append(all_ruls, ruls, axis=0)
     if seriesnum is not None:
         all_series = all_series[:seriesnum]
         all_ruls = all_ruls[:seriesnum]
