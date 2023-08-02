@@ -138,7 +138,12 @@ class BatteryDataset(Dataset):
                         torch.tensor(rul, dtype=torch.float),
                         torch.tensor(len(fea)-self.seqlen,dtype=torch.float)
                         )),
-                        
+        # samples.sort(key=lambda x: x[1][0]) 
+        samples = sorted(samples, key=lambda x: x[1][0][0])      
+        # for sample in samples:
+        #     print(sample[1][0][0])
+        #     # break
+        # assert 0
         return samples
         
     def __getitem__(self, idx):
