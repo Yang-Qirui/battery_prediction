@@ -9,6 +9,7 @@ from scipy.spatial.distance import euclidean
 import argparse
 
 SEQ_LEN = 100
+DEFAULT_OUTLIER_CURVE = 1
 
 def ts_decompose(data):
     time_index = pd.date_range(start='2022-05-01', periods=len(data))
@@ -33,13 +34,13 @@ def calculate_outlier_values(data):
         outlier_values.append(np.mean(distances))
     return np.array(outlier_values)
 
-def main(contamination):
+def main(contamination, path):
     # 读取.npy文件
-    data = np.load('./group0_features.npy')
+    data = np.load(path)
 
-    random_indices = random.sample(range(0, data.shape[1]-1), 2)
+    random_indices = random.sample(range(0, data.shape[1]-1), DEFAULT_OUTLIER_CURVE) 
     random_indices.sort()
-    # print("ERROR:", random_indices)
+    print("ERROR:", random_indices)
 
     # 生成扰动
     for random_index in random_indices:
@@ -88,47 +89,47 @@ def main(contamination):
     recall = len(list(true_pos)) / len(random_indices)
     print("precision:", precision, "recall:", recall)
     # plot
-    # for i, prob_trend in enumerate(prob_trends):
-    #     # print(prob_curve)
-    #     # plt.plot([i for i in range(len(prob_curve.trend))], prob_curve.trend, label=f'{i}')
-    #     plt.plot(prob_trend)
-    # plt.xlabel("cycle")
-    # plt.ylabel("prob")
-    # plt.show()
+    if args.plot:
+        for i, prob_trend in enumerate(prob_trends):
+            # print(prob_curve)
+            # plt.plot([i for i in range(len(prob_curve.trend))], prob_curve.trend, label=f'{i}')
+            plt.plot(prob_trend)
+        plt.xlabel("cycle")
+        plt.ylabel("prob")
+        plt.show()
 
     return precision, recall
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument("-contamination", default=0.09, type=float)
+    arg_parser.add_argument("-contamination", default=0.005, type=float)
+    arg_parser.add_argument("-path", default="./group0_features.npy", type=str)
     arg_parser.add_argument("-epoch", default=20, type=int)
+    arg_parser.add_argument("-train", help="get best_contamination", default=False, type=bool)
+    arg_parser.add_argument("-plot", help="get plot", default=False, type=bool)
+
     args = arg_parser.parse_args()
 
+    if args.train:
+        state_dict = {}
+        for epoch in range(args.epoch):
+            max_precision, max_recall = 0, 0
+            best_contamination = 0
+            print("Epoch 1")
+            for i,  contamination in enumerate([0.07 + 0.01 * j for j in range(10)]):
+                # print("Test:", i)
+                precision, recall = main(contamination, args.path)
+                if precision > max_precision and recall > max_recall:
+                    max_precision = precision
+                    max_recall = recall
+                    best_contamination = contamination
 
-    state_dict = {}
-    # for epoch in range(args.epoch):
-    #     max_precision, max_recall = 0, 0
-    #     best_contamination = 0
-    #     print("Epoch 1")
-    #     for i,  contamination in enumerate([0.07 + 0.01 * j for j in range(10)]):
-    #         # print("Test:", i)
-    #         precision, recall = main(contamination)
-    #         if precision > max_precision and recall > max_recall:
-    #             max_precision = precision
-    #             max_recall = recall
-    #             best_contamination = contamination
-
-    #     print("Best:", max_precision, max_recall, best_contamination)
-    #     if best_contamination in  state_dict.keys():
-    #         state_dict[best_contamination] += 1
-    #     else:
-    #         state_dict[best_contamination] = 1
-    t_pre, t_recall = 0, 0
-    for epoch in range(args.epoch):
-        pre, recall = main(0.01)
-        t_pre += pre
-        t_recall += recall
-
-    print(t_pre / args.epoch, t_recall / args.epoch)
-    # print(state_dict)
-    # main(0.005)
+            print("Best:", max_precision, max_recall, best_contamination)
+            if best_contamination in  state_dict.keys():
+                state_dict[best_contamination] += 1
+            else:
+                state_dict[best_contamination] = 1
+        
+        print("Best contamination", best_contamination)
+    else:
+        main(args.contamination, args.path)

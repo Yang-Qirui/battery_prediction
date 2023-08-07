@@ -14,8 +14,7 @@ def interpolate(data, scale_rate=1):
     x = np.linspace(0, 1, original_length)  
 
     # 创建插值函数
-    
-    f = interp1d(x, data)  
+    f = interp1d(x, data.squeeze(1))  
 
     spline = UnivariateSpline(x, data)
 
@@ -31,8 +30,7 @@ def interpolate(data, scale_rate=1):
     # print("New data:", new_data)
     return new_data, new_spline, new_length, f, spline, original_length
 
-def data_aug():
-    path = './dataset/train'
+def data_aug(path):
     train_data = np.load('/'.join([path, 'soh.npy']))
     scale_rates = [0.8, 0.9, 0.93, 0.96, 0.98, 1.02, 1.05, 1.08, 1.1, 1.2, 1.3]
     curve_list, s_curve_list, curve_func_list, s_curve_func_list, new_length_list, origin_length_list = [], [], [], [], [], []

@@ -72,6 +72,7 @@ def main():
                     sub_col_data = column_data[start_index: end_index].reset_index(drop=True)
 
                     targets.append(sub_col_data[sub_feature_name.index('系统SOH')])
+                    # features.append(sub_col_data[sub_feature_name.index('系统SOH')])
 
                     # features.append(sub_col_data[sub_feature_name.index('系统总电压_V')])
                     # features.append(sub_col_data[sub_feature_name.index('系统平均电压')])

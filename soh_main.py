@@ -59,8 +59,8 @@ def get_root(x, spline, y_target):
     return spline(x) - y_target 
 
 def run(seq_len, N, curve_lens, curve_funcs, args):
-    train_data = np.load('./dataset/train/soh.npy')
-    test_data = np.load('./dataset/test/soh.npy')
+    train_data = np.load(f'{args.data_path}train/soh.npy')
+    test_data = np.load(f'{args.data_path}test/soh.npy')
     _, smooth_train_data, _, _, _, _ = interpolate(train_data)
     _, smooth_test_data, _, _, _, _ = interpolate(test_data)
     smooth_train_data = smooth_train_data.reshape(-1, 1)
@@ -204,26 +204,25 @@ def run(seq_len, N, curve_lens, curve_funcs, args):
 def main():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("-seq_len", help="The sequence length", default=100, type=int)
-    arg_parser.add_argument("-N", help="Predict the next N cycle's SoH", default=1, type=int)
+    arg_parser.add_argument("-N", help="Predict the next N cycle's SoH", default=10, type=int)
     arg_parser.add_argument("-batch", help="batch_size", default=16, type=int)
     arg_parser.add_argument("-valid_batch", help="batch_size", default=1, type=int)
     arg_parser.add_argument("-num_worker", help="number of worker", default=0, type=int)
     arg_parser.add_argument("-epoch", help="num of epoch", default=10, type=int)
     arg_parser.add_argument("-lr", help="learning rate", default=1e-3, type=float)
     arg_parser.add_argument("-top_k", help="choose top_k to retrieval", default=3, type=int)
+    arg_parser.add_argument("-aug_path", help="the path of train set's soh.npy for data augmentation", default='./data/wanguo/train', type=str)
+    arg_parser.add_argument("-data_path", help="the path of train set and test set", default='./data/wanguo/', type=str)
+
 
     args = arg_parser.parse_args()
 
-    curves, curve_funcs, curve_lens = data_aug()
+    curves, curve_funcs, curve_lens = data_aug(args.aug_path)
     # print(curve_lens)
     # assert 0
     print("Curves number after augmentation:", len(curves))
     
-    for seq_len in [50, 75, 100, 125]:
-    # seq_len = int(args.seq_len)
-        for N in [10, 50, 80, 100]:
-    # N = int(args.N)
-            run(seq_len, N, curve_lens, curve_funcs, args)
+    run(args.seq_len, args.N, curve_lens, curve_funcs, args)
 
             
 
