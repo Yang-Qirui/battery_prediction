@@ -18,6 +18,27 @@ from tqdm import tqdm
 # os.environ["CUDA_VISIBLE_DEVICES"]="3"
 
 
+def find_closest_k_dim_vectors(dataset, Y, m):
+    # 假设dataset是一个已经按第一维度排序的二维张量
+    values = dataset.samples
+    
+    # 使用二分查找找到最接近Y的索引
+    left, right = 0, len(values) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if values[mid][1][0][0] < Y:
+            left = mid + 1
+        elif values[mid][1][0][0] > Y:
+            right = mid - 1
+        else:
+            break
+
+    # 找到m个最接近的索引
+    start_idx = max(mid - m // 2, 0)
+    end_idx = min(mid + m // 2 + 1, len(values))
+
+    return DataLoader(dataset[start_idx:end_idx], batch_size=m, shuffle=False)
+
 class RUL_MLP(nn.Module):
     def __init__(self, fea_num, seq_len, hid_size=128):
         super().__init__()
@@ -56,6 +77,7 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
 
     # for sample in train_loader.dataset:
     #     print(sample[0].shape, sample[1].shape, sample[2].shape)
+    min_error = math.inf
 
     for epoch in range(args.epoch):
         total_num = 0
@@ -100,7 +122,8 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
             total_num += errors.size(0)
         test_loss = total_loss / total_num
         test_error = total_error / total_num
-        print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f} ({total_num} samples)')
+        min_error = test_error if test_error < min_error else min_error
+        print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f}, min_error {min_error:.4f} ({total_num} samples)')
 
 
 class RUL_RetrieveNet(nn.Module):
@@ -119,7 +142,7 @@ class RUL_RetrieveNet(nn.Module):
 
         aggregator_inp_dim = hid_size * n_refs + hid_size + n_refs
         self.aggregator_linear1 = nn.Linear(aggregator_inp_dim, hid_size)
-        self.aggregator_linear2 = nn.Linear(hid_size, 1)
+        self.aggregator_linear2 = nn.Linear(hid_size, 3) # 1
         self.aggregator_parameter_free = False
     
     def encode(self, x):
@@ -128,7 +151,8 @@ class RUL_RetrieveNet(nn.Module):
         xx = F.relu(self.encoder_linear1(xx))
         xx = F.relu(self.encoder_linear2(xx))
         y = F.normalize(xx, dim=1)
-        return xx
+        # return xx # miss normalization. A fake cosine sim.
+        return y
 
     def relation(self, enc, enc_):
         if self.relation_parameter_free:
@@ -153,9 +177,14 @@ class RUL_RetrieveNet(nn.Module):
         else:
             batch_sz = self_enc.size(0)
             xx = torch.concatenate([self_enc, ref_enc.view(batch_sz, -1), ref_rul], dim=1)
+            print(xx.shape)
             xx = F.relu(self.aggregator_linear1(xx))
             predictions = self.aggregator_linear2(xx)
-            return predictions
+            pred = torch.mul(predictions, ref_rul).sum(dim=1)
+            print(pred)
+            _pred = F.sigmoid(pred)
+            print(_pred)
+            return pred
 
 
 def my_run(train_loader, test_loader, args, fea_num, seq_len):
@@ -165,14 +194,16 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
 
     # for sample in train_loader.dataset:
     #     print(sample[0].shape, sample[1].shape, sample[2].shape)
+    min_error = math.inf
 
     for epoch in range(args.epoch):
         total_num = 0
         total_error = 0
         total_loss = 0
         net.train()
+
         with tqdm(total=len(train_loader.dataset)) as t:
-            for battery_ids, features, labels in train_loader:
+            for battery_ids, features, labels, _ in train_loader:
                 battery_ids, features, labels = battery_ids.to(device), features.to(device), labels.to(device)
                 batch_sz = labels.size(0)
                 net.zero_grad()
@@ -207,30 +238,38 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
         total_error = 0
         total_loss = 0
         net.eval()
+        assert 0
         # prepare a reference set
-        refset_train_loader = DataLoader(train_loader.dataset, batch_size=1000, shuffle=True)
-        refset_battery_ids, refset_features, refset_labels = next(iter(refset_train_loader))
-        refset_battery_ids = refset_battery_ids.to(device)
-        refset_features = refset_features.to(device)
-        refset_labels = refset_labels.to(device)
-        refset_enc = net.encode(refset_features)
-        for battery_ids, features, labels in test_loader:
+        # refset_train_loader = DataLoader(train_loader.dataset, batch_size=1000, shuffle=False)
+        for battery_ids, features, labels, _ in test_loader:
+            refset_train_loader = find_closest_k_dim_vectors(train_loader.dataset, features[0, 0, 0], 50)
+            refset_battery_ids, refset_features, refset_labels, _ = next(iter(refset_train_loader))
+            refset_battery_ids = refset_battery_ids.to(device)
+            refset_features = refset_features.to(device)
+            refset_labels = refset_labels.to(device)
+            refset_enc = net.encode(refset_features)
+
             battery_ids, features, labels = battery_ids.to(device), features.to(device), labels.to(device)
             batch_sz = labels.size(0)
             enc = net.encode(features)
             enc_sim_mat = net.relation(enc, refset_enc)
+            print(enc_sim_mat)
 
             # mask out the same-battery references
             battery_id_mat = ((battery_ids.unsqueeze(-1) - refset_battery_ids.unsqueeze(0)) != 0)
             ref_weight_mat = enc_sim_mat * battery_id_mat
 
             ref_weight, ref_idx = ref_weight_mat.topk(k=args.top_k, dim=1)
+            print(ref_weight_mat)
+            assert 0
             ref_enc = refset_enc[ref_idx]
             ref_rul = refset_labels[ref_idx]
             predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
 
             errors = torch.abs(predictions - labels) / torch.max(predictions, labels)
             loss = F.mse_loss(predictions, labels, reduce='sum')
+
+            del refset_train_loader
 
             # print(f'predictions:{predictions.shape},\nlabels:{labels.shape},\nerrors:{errors.shape}')
             # print(enc_sim_mat.shape)
@@ -246,7 +285,9 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
             total_num += errors.size(0)
         test_loss = total_loss / total_num
         test_error = total_error / total_num
-        print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f} ({total_num} samples)')
+        min_error = test_error if test_error < min_error else min_error
+
+        print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f}, min_error {min_error:.4f} ({total_num} samples)')
 
 
 def contrastive_loss(source, pos_sample, tao):
@@ -282,8 +323,8 @@ def contrastive_loss(source, pos_sample, tao):
 def main(args):
     train_ds = BatteryDataset(train=True)
     test_ds = BatteryDataset(train=False)
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=args.batch, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=1, shuffle=True)
 
     # ==== Train =====
     # baseline_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)

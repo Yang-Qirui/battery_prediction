@@ -140,6 +140,8 @@ class BatteryDataset(Dataset):
                         )),
         # samples.sort(key=lambda x: x[1][0]) 
         samples = sorted(samples, key=lambda x: x[1][0][0])      
+        # print(len(samples))
+        # assert 0
         # for sample in samples:
         #     print(sample[1][0][0])
         #     # break
