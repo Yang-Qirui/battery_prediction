@@ -142,7 +142,7 @@ class RUL_RetrieveNet(nn.Module):
 
         aggregator_inp_dim = hid_size * n_refs + hid_size + n_refs
         self.aggregator_linear1 = nn.Linear(aggregator_inp_dim, hid_size)
-        self.aggregator_linear2 = nn.Linear(hid_size, 3) # 1
+        self.aggregator_linear2 = nn.Linear(hid_size, 1)
         self.aggregator_parameter_free = False
     
     def encode(self, x):
@@ -150,14 +150,18 @@ class RUL_RetrieveNet(nn.Module):
         xx = x.view(batch_sz, -1)
         xx = F.relu(self.encoder_linear1(xx))
         xx = F.relu(self.encoder_linear2(xx))
-        y = F.normalize(xx, dim=1)
+        # y = F.normalize(xx, dim=1)
         # return xx # miss normalization. A fake cosine sim.
-        return y
+        return xx
 
     def relation(self, enc, enc_):
         if self.relation_parameter_free:
             # parameter free version
             enc_sim_mat = torch.mm(enc, enc_.t())
+            print(enc_sim_mat)
+            norm = torch.norm(enc_sim_mat, p=2, dim=1)
+            print(norm)
+            print("---------------------")
             enc_sim_mat = torch.clamp(enc_sim_mat, min=0)
             return enc_sim_mat
         else:
@@ -177,14 +181,12 @@ class RUL_RetrieveNet(nn.Module):
         else:
             batch_sz = self_enc.size(0)
             xx = torch.concatenate([self_enc, ref_enc.view(batch_sz, -1), ref_rul], dim=1)
-            print(xx.shape)
+            # print(xx.shape)
             xx = F.relu(self.aggregator_linear1(xx))
             predictions = self.aggregator_linear2(xx)
-            pred = torch.mul(predictions, ref_rul).sum(dim=1)
-            print(pred)
-            _pred = F.sigmoid(pred)
-            print(_pred)
-            return pred
+            # print(predictions)
+            # assert 0
+            return predictions
 
 
 def my_run(train_loader, test_loader, args, fea_num, seq_len):
@@ -213,8 +215,13 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
                 # mask out the same-battery references
                 battery_id_mat = ((battery_ids.unsqueeze(-1) - battery_ids.unsqueeze(0)) != 0)
                 ref_weight_mat = enc_sim_mat * battery_id_mat
+                print(ref_weight_mat)
 
                 ref_weight, ref_idx = ref_weight_mat.topk(k=args.top_k, dim=1)
+                print("battery_ids", battery_ids)
+                print("ref_seqs", battery_ids[ref_idx])
+                assert 0
+
                 ref_enc = enc[ref_idx]
                 ref_rul = labels[ref_idx]
                 predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
