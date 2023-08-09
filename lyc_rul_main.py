@@ -2,6 +2,7 @@ from lyc_data_loader import BatteryDataset
 from torch.utils.data import DataLoader, TensorDataset
 import argparse
 import torch
+torch.set_printoptions(profile='full')
 from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
 from models import lstm_encoder, MLP
@@ -150,18 +151,15 @@ class RUL_RetrieveNet(nn.Module):
         xx = x.view(batch_sz, -1)
         xx = F.relu(self.encoder_linear1(xx))
         xx = F.relu(self.encoder_linear2(xx))
-        # y = F.normalize(xx, dim=1)
+        y = F.normalize(xx, dim=1)
         # return xx # miss normalization. A fake cosine sim.
-        return xx
+        return y
 
     def relation(self, enc, enc_):
         if self.relation_parameter_free:
             # parameter free version
             enc_sim_mat = torch.mm(enc, enc_.t())
-            print(enc_sim_mat)
             norm = torch.norm(enc_sim_mat, p=2, dim=1)
-            print(norm)
-            print("---------------------")
             enc_sim_mat = torch.clamp(enc_sim_mat, min=0)
             return enc_sim_mat
         else:
@@ -211,6 +209,7 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
                 net.zero_grad()
                 enc = net.encode(features)
                 enc_sim_mat = net.relation(enc, enc)
+                print(enc_sim_mat)
 
                 # mask out the same-battery references
                 battery_id_mat = ((battery_ids.unsqueeze(-1) - battery_ids.unsqueeze(0)) != 0)
@@ -219,8 +218,9 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
 
                 ref_weight, ref_idx = ref_weight_mat.topk(k=args.top_k, dim=1)
                 print("battery_ids", battery_ids)
-                print("ref_seqs", battery_ids[ref_idx])
-                assert 0
+                print("ref_seqs", ref_idx, battery_ids[ref_idx])
+                print(labels[ref_idx])
+                print('=========================')
 
                 ref_enc = enc[ref_idx]
                 ref_rul = labels[ref_idx]
