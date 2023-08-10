@@ -1,4 +1,4 @@
-from lyc_data_loader import BatteryDataset
+from lyc_data_loader import BatteryDataset, SingleBatteryDataset
 from torch.utils.data import DataLoader, TensorDataset
 import argparse
 import torch
@@ -19,12 +19,12 @@ from tqdm import tqdm
 
 
 class RUL_MLP(nn.Module):
-    def __init__(self, fea_num, seq_len, hid_size=128):
+    def __init__(self, fea_num, seq_len, hid_size=128, output_size=1):
         super().__init__()
         inp_dim = fea_num * seq_len
         self.linear1 = nn.Linear(inp_dim, hid_size*2)
         self.linear2 = nn.Linear(hid_size*2, hid_size)
-        self.linear3 = nn.Linear(hid_size, 1)
+        self.linear3 = nn.Linear(hid_size, output_size)
     
     def forward(self, x):
         batch_sz = x.size(0)
@@ -35,10 +35,10 @@ class RUL_MLP(nn.Module):
         return y
 
 class RUL_RNN(nn.Module):
-    def __init__(self, fea_num, seq_len, hid_size=128):
+    def __init__(self, fea_num, seq_len, hid_size=128, output_size=1):
         super().__init__()
         self.rnn1 = nn.RNN(input_size=fea_num, hidden_size=hid_size, num_layers=1, batch_first=True)
-        self.linear1 = nn.Linear(hid_size, 1)
+        self.linear1 = nn.Linear(hid_size, output_size)
     
     def forward(self, x):
         batch_sz = x.size(0)
@@ -102,6 +102,55 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
         test_error = total_error / total_num
         print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f} ({total_num} samples)')
 
+
+def auto_regressive_run(train_loader, test_loader, args, fea_num, seq_len):
+    device = args.device
+    net = RUL_MLP(fea_num, seq_len, output_size=fea_num).to(device)
+    # net = RUL_RNN(fea_num, seq_len, output_size=fea_num)
+    optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
+
+    for epoch in range(args.epoch):
+        total_loss = 0
+        total_error = 0
+        net.train()
+        with tqdm(total=len(train_loader)) as t:
+            for data in train_loader:
+                features = data[0].float()
+                seq_len = 100
+                input_seq = features[:seq_len]
+                for index in range(seq_len, len(features) - 1):
+                    net.zero_grad()
+                    # 使用当前窗口预测下一个特征
+                    pred_next_fea = net(input_seq.unsqueeze(0)).squeeze(0)
+                    target = features[index]
+                    loss = F.mse_loss(pred_next_fea, target)
+                    error = torch.abs(pred_next_fea[-1] - target[-1]) / target[-1]
+                    loss.backward()
+                    optimizer.step()
+                    pred_next_fea = pred_next_fea.detach()
+                    input_seq = torch.cat([input_seq[1:], pred_next_fea.unsqueeze(0)], dim=0)
+                    total_loss += loss.item()
+                    total_error += error
+                    t.update(1)
+        net.eval()  
+        test_loss = 0
+        test_error = 0
+        with torch.no_grad(): 
+            with tqdm(total=len(test_loader)) as t:
+                for data in test_loader:
+                    features = data[0].float()
+                    input_seq = features[:seq_len]
+                    for index in range(seq_len, len(features) - 1):
+                        # 使用当前窗口预测下一个特征
+                        pred_next_fea = net(input_seq.unsqueeze(0)).squeeze(0)
+                        target = features[index]
+                        loss = F.mse_loss(pred_next_fea, target)
+                        error = torch.abs(pred_next_fea[-1] - target[-1]) / target[-1]
+                        input_seq = torch.cat([input_seq[1:], pred_next_fea.unsqueeze(0)], dim=0)
+                        test_loss += loss.item()
+                        test_error += error
+                        t.update(1)
+        print(f'Epoch {epoch}, Train Loss: {total_loss / len(train_loader)}, Train Error: {total_error / len(train_loader)}, Test Loss: {total_loss / len(test_loader)}, Test Error: {total_error / len(test_loader)}')
 
 class RUL_RetrieveNet(nn.Module):
     def __init__(self, fea_num, seq_len, hid_size=128, n_refs=3):
@@ -280,14 +329,21 @@ def contrastive_loss(source, pos_sample, tao):
 
 
 def main(args):
-    train_ds = BatteryDataset(train=True)
-    test_ds = BatteryDataset(train=False)
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=args.batch, shuffle=False)
+    # # ==== Train =====
+    # train_ds = BatteryDataset(train=True)
+    # test_ds = BatteryDataset(train=False)
+    # train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True)
+    # test_loader = DataLoader(test_ds, batch_size=args.batch, shuffle=False)
 
-    # ==== Train =====
-    # baseline_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
-    my_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
+    # # baseline_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
+    # my_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
+
+    # ==== Auto regressive Train =====
+    train_ds = SingleBatteryDataset(train=True)
+    test_ds = SingleBatteryDataset(train=True)
+    train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, collate_fn=lambda x: [i for i in x])
+    test_loader = DataLoader(test_ds, batch_size=1, shuffle=True, collate_fn=lambda x: [i for i in x])
+    auto_regressive_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][0].shape[-1], seq_len=args.seq_len)
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()

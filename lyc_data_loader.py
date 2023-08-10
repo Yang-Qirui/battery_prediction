@@ -26,6 +26,14 @@ plt.rcParams['axes.unicode_minus'] = False
 import warnings
 warnings.filterwarnings('ignore')
 
+new_valid = ['4-3', '5-7', '3-3', '2-3', '9-3', '10-5', '3-2', '3-7']
+new_train = ['9-1', '2-2', '4-7','9-7', '1-8','4-6','2-7','8-4', '7-2','10-3', '2-4', '7-4', '3-4',
+            '5-4', '8-7','7-7', '4-4','1-3', '7-1','5-2', '6-4', '9-8','9-5','6-3','10-8','1-6','3-5',
+             '2-6', '3-8', '3-6', '4-8', '7-8','5-1', '2-8', '8-2','1-5','7-3', '10-2','5-5', '9-2','5-6', '1-7', 
+             '8-3', '4-1','4-2','1-4','6-5', ]
+new_test  = ['9-6','4-5','1-2', '10-7','1-1', '6-1','6-6', '9-4','10-4','8-5', '5-3','10-6',
+            '2-5','6-2','3-1','8-8', '8-1','8-6','7-6','6-8','7-5','10-1']
+
 def our_data_loader_generate(pkl_dir='./data/our_data/'):
 
     i_low = -2199
@@ -39,14 +47,6 @@ def our_data_loader_generate(pkl_dir='./data/our_data/'):
     pkl_dir = pkl_dir
     series_lens = [100]
 
-    new_valid = ['4-3', '5-7', '3-3', '2-3', '9-3', '10-5', '3-2', '3-7']
-    new_train = ['9-1', '2-2', '4-7','9-7', '1-8','4-6','2-7','8-4', '7-2','10-3', '2-4', '7-4', '3-4',
-            '5-4', '8-7','7-7', '4-4','1-3', '7-1','5-2', '6-4', '9-8','9-5','6-3','10-8','1-6','3-5',
-             '2-6', '3-8', '3-6', '4-8', '7-8','5-1', '2-8', '8-2','1-5','7-3', '10-2','5-5', '9-2','5-6', '1-7', 
-             '8-3', '4-1','4-2','1-4','6-5', ]
-    new_test  = ['9-6','4-5','1-2', '10-7','1-1', '6-1','6-6', '9-4','10-4','8-5', '5-3','10-6',
-            '2-5','6-2','3-1','8-8', '8-1','8-6','7-6','6-8','7-5','10-1']
-
     train_fea, train_lbl = [], []
     for name in new_train + new_valid:
         print(f"loading {name}")
@@ -55,6 +55,7 @@ def our_data_loader_generate(pkl_dir='./data/our_data/'):
         '''
         tmp_fea, tmp_lbl = get_xy(name, series_lens, i_low, i_upp, v_low, v_upp, q_low, q_upp,
                                                    rul_factor, cap_factor, pkl_dir, raw_features=True)
+        
         # tmp_fea, tmp_lbl = get_xy(name, n_cyc, in_stride, fea_num, v_low, v_upp, q_low, q_upp, rul_factor, cap_factor)
         train_fea.append(tmp_fea)
         train_lbl.append(tmp_lbl)
@@ -74,6 +75,23 @@ def our_data_loader_generate(pkl_dir='./data/our_data/'):
     return train_fea, train_lbl, test_fea, test_lbl
 
 
+class SingleBatteryDataset(Dataset):
+    def __init__(self, data_dir='./data/our_data/', train=True):
+        train_fea, train_lbl, test_fea, test_lbl = our_data_loader_generate(data_dir)
+        if train:
+            self.fea = train_fea
+            self.lbl = train_lbl
+        else:
+            self.fea = test_fea
+            self.lbl = test_lbl
+
+    def __getitem__(self, index):
+        return torch.cat((torch.tensor(self.fea[index]), torch.tensor(self.lbl[index]).unsqueeze(-1)), dim=1)
+
+    def __len__(self):
+        assert len(self.fea) == len(self.lbl)
+        return len(self.fea)
+
 class BatteryDataset(Dataset):
     def __init__(self, data_dir='./data/our_data/', train=True, seqlen=100, stride=10):
         #import pdb;pdb.set_trace()
@@ -89,22 +107,6 @@ class BatteryDataset(Dataset):
             self.lbl = test_lbl
             self.samples = self._gen_samples_test()
     
-    # def _gen_samples(self):
-    #     samples = []
-    #     for battery_id, fea in enumerate(self.fea):
-    #         lbl = self.lbl[battery_id]
-    #         for ratio in range(4):
-    #             print(f'battery {battery_id}, num_cycles {len(fea)}, rul@0 {lbl[0]}, last_cycle_SOH {fea[-1][0]}')
-    #             for cycle_id in list(range(len(fea)//(ratio+1)))[10::self.stride]:
-    #                 if cycle_id + self.seqlen >= len(fea) - 1 or cycle_id + self.seqlen >= 1500:
-    #                     break
-    #                 fea_seq = fea[cycle_id:cycle_id+self.seqlen*(ratio+1):(ratio+1)]
-    #                 rul = lbl[cycle_id+self.seqlen*(ratio+1)]
-    #                 samples.append((
-    #                     torch.tensor(battery_id, dtype=torch.int),
-    #                     torch.tensor(fea_seq, dtype=torch.float),
-    #                     torch.tensor(rul, dtype=torch.float)))
-    #     return samples
     def _gen_samples(self):
         samples = []
         for battery_id, fea in enumerate(self.fea):
@@ -135,8 +137,7 @@ class BatteryDataset(Dataset):
                 samples.append((
                         torch.tensor(battery_id, dtype=torch.int),
                         torch.tensor(fea_seq, dtype=torch.float),
-                        torch.tensor(rul, dtype=torch.float),
-                        torch.tensor(len(fea)-self.seqlen,dtype=torch.float)
+                        torch.tensor(rul, dtype=torch.float)
                         )),
                         
         return samples
