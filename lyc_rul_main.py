@@ -15,6 +15,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 import os
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 # os.environ["CUDA_VISIBLE_DEVICES"]="3"
 
 
@@ -105,8 +106,8 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
 
 def auto_regressive_run(train_loader, test_loader, args, fea_num, seq_len):
     device = args.device
-    net = RUL_MLP(fea_num, seq_len, output_size=fea_num).to(device)
-    # net = RUL_RNN(fea_num, seq_len, output_size=fea_num)
+    # net = RUL_MLP(fea_num, seq_len, output_size=fea_num).to(device)
+    net = RUL_RNN(fea_num, seq_len, output_size=fea_num).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
 
     for epoch in range(args.epoch):
@@ -114,43 +115,76 @@ def auto_regressive_run(train_loader, test_loader, args, fea_num, seq_len):
         total_error = 0
         net.train()
         with tqdm(total=len(train_loader)) as t:
+            id = 0
             for data in train_loader:
-                features = data[0].float()
-                seq_len = 100
+                features, labels = data[0][0].float(), data[0][1]
+                real_rul = labels[0]
+                real_sohs = features[:, 0].tolist()
                 input_seq = features[:seq_len]
+                predict_rul = 0
+                predicted_soh = input_seq[:, 0].tolist()
                 for index in range(seq_len, len(features) - 1):
                     net.zero_grad()
                     # 使用当前窗口预测下一个特征
                     pred_next_fea = net(input_seq.unsqueeze(0)).squeeze(0)
+                    predicted_soh.append(pred_next_fea[0].detach())
                     target = features[index]
                     loss = F.mse_loss(pred_next_fea, target)
-                    error = torch.abs(pred_next_fea[-1] - target[-1]) / target[-1]
                     loss.backward()
                     optimizer.step()
                     pred_next_fea = pred_next_fea.detach()
+                    total_loss += loss.item()     
+                    # if pred_next_fea[0] < 0.74:
+                    #     break
                     input_seq = torch.cat([input_seq[1:], pred_next_fea.unsqueeze(0)], dim=0)
-                    total_loss += loss.item()
-                    total_error += error
-                    t.update(1)
+                    predict_rul += 1
+                error = torch.abs(predict_rul - real_rul)
+                if not os.path.exists(f"./figures/epoch-{epoch}/train"):
+                    os.makedirs(f"./figures/epoch-{epoch}/train")
+                plt.figure()
+                plt.plot([i for i in range(len(real_sohs))], real_sohs)
+                plt.plot([i for i in range(len(predicted_soh))], predicted_soh)
+                plt.savefig(f'./figures/epoch-{epoch}/train/{id}.png')
+                plt.close()
+                id += 1
+                total_error += error
+                t.set_description(f"Epoch {epoch}")
+                t.set_postfix(loss=loss.item(), error=error.item())
+                t.update(1)
         net.eval()  
         test_loss = 0
         test_error = 0
         with torch.no_grad(): 
-            with tqdm(total=len(test_loader)) as t:
-                for data in test_loader:
-                    features = data[0].float()
-                    input_seq = features[:seq_len]
-                    for index in range(seq_len, len(features) - 1):
-                        # 使用当前窗口预测下一个特征
-                        pred_next_fea = net(input_seq.unsqueeze(0)).squeeze(0)
-                        target = features[index]
-                        loss = F.mse_loss(pred_next_fea, target)
-                        error = torch.abs(pred_next_fea[-1] - target[-1]) / target[-1]
-                        input_seq = torch.cat([input_seq[1:], pred_next_fea.unsqueeze(0)], dim=0)
-                        test_loss += loss.item()
-                        test_error += error
-                        t.update(1)
-        print(f'Epoch {epoch}, Train Loss: {total_loss / len(train_loader)}, Train Error: {total_error / len(train_loader)}, Test Loss: {total_loss / len(test_loader)}, Test Error: {total_error / len(test_loader)}')
+            id = 0
+            for data in test_loader:
+                features, labels = data[0][0].float(), data[0][1]
+                real_sohs = features[:, 0].tolist()
+                real_rul = labels[0]
+                input_seq = features[:seq_len]
+                predict_rul = 0
+                predicted_soh = input_seq[:, 0].tolist()
+                for index in range(seq_len, len(features) - 1):
+                    # 使用当前窗口预测下一个特征
+                    pred_next_fea = net(input_seq.unsqueeze(0)).squeeze(0)
+                    target = features[index]
+                    loss = F.mse_loss(pred_next_fea, target)
+                    predicted_soh.append(pred_next_fea[0])
+                    if pred_next_fea[0] < 0.74:
+                        break
+                    input_seq = torch.cat([input_seq[1:], pred_next_fea.unsqueeze(0)], dim=0)
+                    test_loss += loss.item()
+                    predict_rul += 1
+                test_error += torch.abs(predict_rul - real_rul)
+                print(predict_rul, real_rul)
+                if not os.path.exists(f"./figures/epoch-{epoch}/test"):
+                    os.makedirs(f"./figures/epoch-{epoch}/test")
+                plt.figure()
+                plt.plot([i for i in range(len(real_sohs))], real_sohs)
+                plt.plot([i for i in range(len(predicted_soh))], predicted_soh)
+                plt.savefig(f'./figures/epoch-{epoch}/test/{id}.png')
+                plt.close()
+                id += 1
+        print(f'Epoch {epoch}, Train Loss: {total_loss / len(train_loader)}, Train Error: {total_error / len(train_loader)}, Test Loss: {test_loss / len(test_loader)}, Test Error: {test_error / len(test_loader)}')
 
 class RUL_RetrieveNet(nn.Module):
     def __init__(self, fea_num, seq_len, hid_size=128, n_refs=3):
@@ -339,7 +373,7 @@ def main(args):
     # my_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
 
     # ==== Auto regressive Train =====
-    train_ds = SingleBatteryDataset(train=True)
+    train_ds = SingleBatteryDataset(train=False)
     test_ds = SingleBatteryDataset(train=True)
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, collate_fn=lambda x: [i for i in x])
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=True, collate_fn=lambda x: [i for i in x])

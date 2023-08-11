@@ -86,7 +86,7 @@ class SingleBatteryDataset(Dataset):
             self.lbl = test_lbl
 
     def __getitem__(self, index):
-        return torch.cat((torch.tensor(self.fea[index]), torch.tensor(self.lbl[index]).unsqueeze(-1)), dim=1)
+        return (torch.tensor(self.fea[index]), torch.tensor(self.lbl[index]))
 
     def __len__(self):
         assert len(self.fea) == len(self.lbl)
