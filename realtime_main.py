@@ -1,4 +1,5 @@
 from lyc_data_loader import BatteryDataset
+# from real_data_loader_cap import BatteryDataset
 from torch.utils.data import DataLoader, TensorDataset
 import argparse
 import torch
@@ -51,9 +52,9 @@ class RUL_RNN(nn.Module):
 
 def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
     device = args.device
-    net = RUL_MLP(fea_num, seq_len).to(device)
+    net = RUL_RNN(fea_num, seq_len).to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
-
+    test_error_min =1
     # for sample in train_loader.dataset:
     #     print(sample[0].shape, sample[1].shape, sample[2].shape)
 
@@ -88,9 +89,15 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
         total_error = 0
         total_loss = 0
         net.eval()
+        result = [[] for _ in range(22)]
+        realrul=[[] for _ in range(22)]
+        rulLife=[[] for _ in range(22)]
         for battery_ids, features, labels in test_loader:
             battery_ids, features, labels = battery_ids.to(device), features.to(device), labels.to(device)
             predictions = net(features).squeeze()
+            for i in range(predictions.shape[0]):
+                result[battery_ids[i]].append(predictions[i].detach().cpu())
+                realrul[battery_ids[i]].append(labels[i].detach().cpu())
             # predictions = torch.clamp(predictions, min=0.0001)
             errors = torch.abs(predictions - labels) / torch.max(predictions, labels)
             loss = F.mse_loss(predictions, labels, reduce='sum')
@@ -100,7 +107,16 @@ def baseline_run(train_loader, test_loader, args, fea_num, seq_len):
             total_num += errors.size(0)
         test_loss = total_loss / total_num
         test_error = total_error / total_num
-        print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f} ({total_num} samples)')
+        test_error_min = min(test_error,test_error_min)
+        print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f}, test_loss {test_loss:.4f}, test_error {test_error:.4f},({total_num} samples),test_error_min{test_error_min:.4f} ({total_num} samples)')
+        if test_error <= test_error_min:    
+            result=[np.array(res) for res in result]
+            realrul=[np.array(rerul) for rerul in realrul]
+            result=np.array(result)
+            realrul=np.array(realrul)
+
+            np.save('real_result_mlp_cap.npy', result)
+            np.save('real_realrul_mlp_cap.npy',realrul) 
 
 
 class RUL_RetrieveNet(nn.Module):
@@ -128,7 +144,7 @@ class RUL_RetrieveNet(nn.Module):
         xx = F.relu(self.encoder_linear1(xx))
         xx = F.relu(self.encoder_linear2(xx))
         y = F.normalize(xx, dim=1)
-        return y
+        return xx
 
     def relation(self, enc, enc_):
         if self.relation_parameter_free:
@@ -215,6 +231,9 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
         refset_features = refset_features.to(device)
         refset_labels = refset_labels.to(device)
         refset_enc = net.encode(refset_features)
+        result = [[] for _ in range(22)]
+        realrul=[[] for _ in range(22)]
+        rulLife=[[] for _ in range(22)]
         for battery_ids, features, labels in test_loader:
             battery_ids, features, labels = battery_ids.to(device), features.to(device), labels.to(device)
             batch_sz = labels.size(0)
@@ -229,7 +248,9 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
             ref_enc = refset_enc[ref_idx]
             ref_rul = refset_labels[ref_idx]
             predictions = net.aggregate(enc, ref_weight, ref_enc, ref_rul).squeeze()
-
+            for i in range(predictions.shape[0]):
+                result[battery_ids[i]].append(predictions[i].detach().cpu())
+                realrul[battery_ids[i]].append(labels[i].detach().cpu())
             errors = torch.abs(predictions - labels) / torch.max(predictions, labels)
             # errors = torch.abs(predictions - labels) / labels
             loss = F.mse_loss(predictions, labels, reduce='sum')
@@ -248,11 +269,19 @@ def my_run(train_loader, test_loader, args, fea_num, seq_len):
             total_error += errors.sum().item()
             total_loss += loss
             total_num += errors.size(0)
+        #import pdb;pdb.set_trace()
         test_loss = total_loss / total_num
         test_error = total_error / total_num
         test_error_min = min(test_error,test_error_min)
         print(f'Epoch {epoch}: train_loss {train_loss:.4f}, train_error {train_error:.4f},test_loss {test_loss:.4f}, test_error {test_error:.4f},test_error_min{test_error_min:.4f} ({total_num} samples)')
-      
+        if test_error <= test_error_min:    
+            result=[np.array(res) for res in result]
+            realrul=[np.array(rerul) for rerul in realrul]
+            result=np.array(result)
+            realrul=np.array(realrul)
+
+            np.save( './npy/real_result_our_0918.npy', result)
+            np.save('./npy/real_realrul_our_0918.npy',realrul)  
         
 
 def contrastive_loss(source, pos_sample, tao):
@@ -292,20 +321,20 @@ def main(args):
     test_loader = DataLoader(test_ds, batch_size=args.batch, shuffle=False)
 
     # ==== Train =====
-    # baseline_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
+
     my_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
     # baseline_run(train_loader=train_loader, test_loader=test_loader, args=args, fea_num=train_ds[0][1].size(-1), seq_len=args.seq_len)
 
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("-device", type=str, default='cuda:1')
-    argparser.add_argument("-batch", type=int, default=128)
+    argparser.add_argument("-device", type=str, default='cuda:2')
+    argparser.add_argument("-batch", type=int, default=64)
     argparser.add_argument("-valid_batch", type=int, default=1)
-    argparser.add_argument("-epoch", type=int, default=1000)#100
+    argparser.add_argument("-epoch", type=int, default=500)#100
     argparser.add_argument("-lr", help="initial learning rate", type=float, default=1e-3)#1e-3
     argparser.add_argument("-gamma", help="learning rate decay rate", type=float, default=0.9)
-    argparser.add_argument("--seq-len", type=int, help="number of cycles as the feature", default=300)  # 100
+    argparser.add_argument("--seq-len", type=int, help="number of cycles as the feature", default=100)  # 100
     argparser.add_argument("--lstm-hidden", type=int, help="lstm hidden layer number", default=128)  # 128
     argparser.add_argument("--fc-hidden", type=int, help="fully connect layer hidden dimension", default=98)  # 128
     argparser.add_argument("--fc-out", type=int, help="embedded sequence dimmension", default=64)  # 128
